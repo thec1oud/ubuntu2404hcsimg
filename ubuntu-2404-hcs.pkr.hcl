@@ -111,8 +111,6 @@ source "qemu" "ubuntu2404" {
   shutdown_command = "sudo shutdown -P now"
   output_directory = "${var.output_dir}/${var.hardening_profile}"
   vm_name          = "${var.image_name}-${var.hardening_profile}.qcow2"
-
-  qemuargs = [["-serial", "stdio"]]
 }
 
 build {
