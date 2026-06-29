@@ -41,7 +41,7 @@ build/image.sha256:
 setup:
 	@echo "=== Installing build dependencies ==="
 	sudo apt-get update -qq
-	sudo apt-get install -y qemu-system-x86 qemu-utils libguestfs-tools gnupg curl
+	sudo apt-get install -y qemu-system-x86 qemu-utils libguestfs-tools gnupg curl xorriso
 	@if ! command -v packer &>/dev/null; then \
 	  echo "--- Installing Packer ---"; \
 	  curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
