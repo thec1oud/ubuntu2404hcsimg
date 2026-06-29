@@ -1,5 +1,6 @@
 # Makefile — build the HCS Ubuntu 24.04 image catalogue.
 #
+#   make setup      -> install host deps (qemu, packer, etc.) — run once per build host
 #   make base       -> dist/ubuntu-2404-hcs-base-<sha>.qcow2
 #   make cis-l1     -> dist/ubuntu-2404-hcs-cis-l1-<sha>.qcow2
 #   make cis-l2     -> dist/ubuntu-2404-hcs-cis-l2-<sha>.qcow2
@@ -29,13 +30,27 @@ ifdef PATCH
 PACKER_VARS += -var 'patch_on_first_boot=$(PATCH)'
 endif
 
-.PHONY: all base cis-l1 cis-l2 prepare init validate check check-base check-cis-l1 check-cis-l2 clean distclean
+.PHONY: all base cis-l1 cis-l2 prepare init validate setup check check-base check-cis-l1 check-cis-l2 clean distclean
 
 all: base cis-l1 cis-l2
 
 prepare: build/image.sha256
 build/image.sha256:
 	./prepare.sh
+
+setup:
+	@echo "=== Installing build dependencies ==="
+	sudo apt-get update -qq
+	sudo apt-get install -y qemu-system-x86 qemu-utils libguestfs-tools gnupg curl
+	@if ! command -v packer &>/dev/null; then \
+	  echo "--- Installing Packer ---"; \
+	  curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
+	  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $$(. /etc/os-release && echo $$VERSION_CODENAME) main" \
+	    | sudo tee /etc/apt/sources.list.d/hashicorp.list; \
+	  sudo apt-get update -qq && sudo apt-get install -y packer; \
+	fi
+	chmod +x validate.sh scripts/validate-instance.sh
+	@echo "=== Setup complete — run 'make prepare' next ==="
 
 init:
 	packer init .
