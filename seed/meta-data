@@ -1,0 +1,2 @@
+instance-id: packer-build-ubuntu2404-hcs
+local-hostname: packer-build

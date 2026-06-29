@@ -1,0 +1,12 @@
+# Build inputs/outputs and ephemeral secrets — never commit these.
+build/
+output/
+*.qcow2
+*.img
+build_key
+build_key.pub
+dist/
+
+# editor
+.idea
+.vscode
