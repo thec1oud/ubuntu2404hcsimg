@@ -49,7 +49,7 @@ variable "hardening_profile" {
   default = "cis-l1"
   validation {
     condition     = contains(["base", "cis-l1", "cis-l2"], var.hardening_profile)
-    error_message = "hardening_profile must be one of: base, cis-l1, cis-l2."
+    error_message = "Hardening profile must be one of: base, cis-l1, cis-l2."
   }
 }
 
