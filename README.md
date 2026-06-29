@@ -265,7 +265,7 @@ testing on a throwaway instance.
   no` (sshd) are both set. Consequence: **launch every instance with an HCS key
   pair** — one booted with the "password" login method will be unreachable. The
   one-click password-reset agent is therefore pointless here; leave
-  `reset_agent_zip` empty.
+  `RESET_AGENT` unset (the default).
 - **Patch cadence.** This produces a point-in-time image. `unattended-upgrades`
   covers security drift between rebuilds, but still re-run the whole build on a
   schedule and keep this directory in version control so each image is

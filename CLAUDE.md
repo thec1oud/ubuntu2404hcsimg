@@ -81,7 +81,7 @@ Scripts run inside the build VM as root via `sudo -E bash`. Order matters:
 
 - **auditd `-e 2` (immutable) lives in `99-immutable.rules`**, sorted last, so the L2 `81-hcs-l2.rules` loads before it is applied.
 
-- **`reset_agent_zip` is consumed by `finalize.sh`**, not by Packer directly. The CloudResetPwdAgent package is environment-specific (not publicly downloadable).
+- **`RESET_AGENT` is a Makefile-only variable**, passed directly to `finalize.sh` — it is not a Packer variable. The CloudResetPwdAgent package is environment-specific (not publicly downloadable).
 
 ## Variables
 

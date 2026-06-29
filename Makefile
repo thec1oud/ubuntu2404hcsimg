@@ -3,12 +3,18 @@
 #   make base       -> dist/ubuntu-2404-hcs-base-<sha>.qcow2
 #   make cis-l1     -> dist/ubuntu-2404-hcs-cis-l1-<sha>.qcow2
 #   make cis-l2     -> dist/ubuntu-2404-hcs-cis-l2-<sha>.qcow2
-#   make all        -> all three
+#   make all        -> all three (each build runs validate.sh automatically)
 #
 # Optional overrides:
 #   make cis-l1 NTP_SERVERS="ntp1.corp ntp2.corp"
 #   make cis-l1 PATCH=true
 #   make cis-l1 RESET_AGENT=/path/CloudResetPwdAgent.zip   # (skip with key-only)
+#
+# Validation (offline, on the built qcow2):
+#   make check-base / make check-cis-l1 / make check-cis-l2
+#   make check          -> all three
+# On-instance (after deploying to HCS):
+#   ssh ubuntu@<ip> 'bash -s' < scripts/validate-instance.sh
 #
 SHELL      := /bin/bash
 IMAGE_NAME := ubuntu-2404-hcs
@@ -23,7 +29,7 @@ ifdef PATCH
 PACKER_VARS += -var 'patch_on_first_boot=$(PATCH)'
 endif
 
-.PHONY: all base cis-l1 cis-l2 prepare init validate clean distclean
+.PHONY: all base cis-l1 cis-l2 prepare init validate check check-base check-cis-l1 check-cis-l2 clean distclean
 
 all: base cis-l1 cis-l2
 
@@ -33,6 +39,7 @@ build/image.sha256:
 
 init:
 	packer init .
+	chmod +x validate.sh scripts/validate-instance.sh
 
 validate: prepare init
 	packer validate -var 'git_sha=$(SHA)' .
@@ -55,7 +62,18 @@ base cis-l1 cis-l2: prepare init
 	  echo "  \"built_utc\": \"$$(date -u +%Y-%m-%dT%H:%M:%SZ)\""; \
 	  echo '}'; \
 	} > $(DIST)/$(IMAGE_NAME)-$@-$(SHA).manifest.json
+	bash validate.sh $(DIST)/$(IMAGE_NAME)-$@-$(SHA).qcow2 $@
 	@echo "=== Done: $(DIST)/$(IMAGE_NAME)-$@-$(SHA).qcow2 (+ .manifest.json) ==="
+
+# Standalone image validation (offline, no HCS needed).
+# 'make check-<sku>' re-runs validate.sh against a previously built image.
+# 'make check' validates all three SKUs.
+check: check-base check-cis-l1 check-cis-l2
+
+check-base check-cis-l1 check-cis-l2:
+	@test -f $(DIST)/$(IMAGE_NAME)-$(subst check-,,$@)-$(SHA).qcow2 || \
+	  { echo "ERROR: $(DIST)/$(IMAGE_NAME)-$(subst check-,,$@)-$(SHA).qcow2 not found — run 'make $(subst check-,,$@)' first"; exit 1; }
+	bash validate.sh $(DIST)/$(IMAGE_NAME)-$(subst check-,,$@)-$(SHA).qcow2 $(subst check-,,$@)
 
 clean:
 	rm -rf output
