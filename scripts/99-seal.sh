@@ -47,9 +47,12 @@ rm -rf /var/lib/cloud/instances/* /var/lib/cloud/instance 2>/dev/null || true
 echo "==> Seal: cloud-init clean so it re-runs fresh on HCS"
 cloud-init clean --logs --seed --machine-id || cloud-init clean --logs --seed || true
 
-echo "==> Seal: clear network leases and resolv.conf"
+echo "==> Seal: clear network leases; restore resolv.conf symlink"
 rm -f /var/lib/dhcp/* 2>/dev/null || true
-truncate -s 0 /etc/resolv.conf 2>/dev/null || true
+# Restore the canonical symlink — truncating would corrupt systemd-resolved's
+# stub file, and a stale regular file would shadow the FallbackDNS config.
+rm -f /etc/resolv.conf
+ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
 sync
 echo "==> 99-seal.sh complete"

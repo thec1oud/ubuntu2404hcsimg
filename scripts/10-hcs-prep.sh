@@ -79,6 +79,25 @@ echo "==> [4/9] Networking: let cloud-init render from the HCS datasource"
 rm -f /etc/udev/rules.d/70-persistent-net.rules \
       /etc/udev/rules.d/*persistent*net*.rules 2>/dev/null || true
 
+# Bake in global nameservers via systemd-resolved. DNS= is queried in parallel
+# with whatever per-link DNS HCS pushes via DHCP/datasource, so public resolution
+# works from the first moment of boot and if internal resolvers don't forward
+# externally. For airgapped deployments replace these with your internal resolvers.
+systemctl enable systemd-resolved || true
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/10-hcs-fallback.conf <<'EOF'
+[Resolve]
+# DNS= is queried in parallel with any per-link DNS the HCS datasource provides.
+# FallbackDNS= would only activate if the platform provides no DNS at all, which
+# is too late — use DNS= so resolution always works regardless of platform state.
+DNS=8.8.8.8 1.1.1.1
+FallbackDNS=8.8.4.4 1.0.0.1
+EOF
+# Ensure /etc/resolv.conf is the canonical systemd-resolved stub symlink.
+# On Ubuntu 24.04 this is already the default; we set it explicitly so the
+# seal step (which removes the file) leaves an identical, correct state.
+ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
 echo "==> [5/9] fstab + GRUB: reference the root filesystem by UUID"
 # Ubuntu's cloud image mounts root via LABEL=cloudimg-rootfs. HCS asks for UUID
 # in fstab and GRUB.

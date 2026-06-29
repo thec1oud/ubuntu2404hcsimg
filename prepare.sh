@@ -52,8 +52,13 @@ grep " *${IMG_NAME}\$" SHA256SUMS | sha256sum -c -
 # Pin the checksum we just verified, for Packer to re-check.
 # Ubuntu SHA256SUMS uses binary format: "hash *filename" — strip the leading *
 # before comparing so both "hash  filename" and "hash *filename" are handled.
-awk -v f="${IMG_NAME}" '{sub(/^\*/, "", $2)} $2 == f {print $1}' SHA256SUMS > image.sha256
-echo "==> Verified. Pinned sha256: $(cat image.sha256)"
+PINNED_SHA="$(awk -v f="${IMG_NAME}" '{sub(/^\*/, "", $2)} $2 == f {print $1}' SHA256SUMS)"
+if [ -z "$PINNED_SHA" ]; then
+  echo "ERROR: ${IMG_NAME} not found in SHA256SUMS — cannot pin checksum" >&2
+  exit 1
+fi
+echo "$PINNED_SHA" > image.sha256
+echo "==> Verified. Pinned sha256: ${PINNED_SHA}"
 
 echo "==> Generating an ephemeral SSH key for the build VM (not shipped)"
 if [ ! -f build_key ]; then
