@@ -50,7 +50,9 @@ echo "==> Verifying the image hash against the now-trusted manifest"
 grep " *${IMG_NAME}\$" SHA256SUMS | sha256sum -c -
 
 # Pin the checksum we just verified, for Packer to re-check.
-awk -v f="${IMG_NAME}" '$2 == f {print $1}' SHA256SUMS > image.sha256
+# Ubuntu SHA256SUMS uses binary format: "hash *filename" — strip the leading *
+# before comparing so both "hash  filename" and "hash *filename" are handled.
+awk -v f="${IMG_NAME}" '{sub(/^\*/, "", $2)} $2 == f {print $1}' SHA256SUMS > image.sha256
 echo "==> Verified. Pinned sha256: $(cat image.sha256)"
 
 echo "==> Generating an ephemeral SSH key for the build VM (not shipped)"

@@ -33,14 +33,7 @@ echo "==> [2/9] Ensure virtio block + net drivers are in the initramfs"
 # Ubuntu 24.04's kernel includes virtio, but a trimmed initramfs can omit it.
 # Force-include the modules and rebuild so the VM can find its root disk/NIC
 # on first boot under KVM on HCS.
-cat > /etc/initramfs-tools/modules.d/virtio.conf <<'EOF'
-virtio
-virtio_pci
-virtio_blk
-virtio_scsi
-virtio_net
-EOF
-# initramfs-tools reads /etc/initramfs-tools/modules (single file); append there too.
+# initramfs-tools reads /etc/initramfs-tools/modules (single file).
 for m in virtio virtio_pci virtio_blk virtio_scsi virtio_net; do
   grep -qxF "$m" /etc/initramfs-tools/modules 2>/dev/null || echo "$m" >> /etc/initramfs-tools/modules
 done

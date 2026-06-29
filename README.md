@@ -89,13 +89,20 @@ footer of `scripts/20-harden.sh`).
 
 ### Build knobs (set in `variables.auto.pkrvars.hcl`, `-var`, or `make VAR=...`)
 
+**Packer variables** (set in `variables.auto.pkrvars.hcl`, `-var`, or `make VAR=...`):
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `hardening_profile` | `cis-l1` | `base` \| `cis-l1` \| `cis-l2` (the Makefile sets this per target) |
 | `ntp_servers` | `""` | Space-separated NTP hosts for chrony. **Set for production**; if set, the public pool is disabled (airgap-safe). |
 | `patch_on_first_boot` | `false` | Apply security updates on first boot, like stock AWS/Azure images. Slows first boot. |
-| `reset_agent_zip` | `""` | Path to your HCS `CloudResetPwdAgent.zip`. Leave empty with key-only auth. |
 | `disk_size` | `40G` | System disk size (keep ≤ 128G). |
+
+**Makefile-only variable** (passed directly to `finalize.sh`, not via Packer):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RESET_AGENT` | `""` | Path to your HCS `CloudResetPwdAgent.zip` (`make cis-l1 RESET_AGENT=/path/to/agent.zip`). Leave empty with key-only auth. |
 
 Sub-toggles for the hardening scripts (env, e.g. via the provisioner):
 `HARDEN_TMP=false` (skip `/tmp` noexec), `SSH_PERMIT_ROOT=no` (forbid root SSH).

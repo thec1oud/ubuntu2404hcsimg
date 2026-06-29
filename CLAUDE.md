@@ -85,16 +85,21 @@ Scripts run inside the build VM as root via `sudo -E bash`. Order matters:
 
 ## Variables
 
-Defined in `ubuntu-2404-hcs.pkr.hcl`, with defaults in `variables.auto.pkrvars.hcl`. Override via `-var`, `make VAR=...`, or by editing `variables.auto.pkrvars.hcl`:
+**Packer variables** — defined in `ubuntu-2404-hcs.pkr.hcl`, with defaults in `variables.auto.pkrvars.hcl`. Override via `-var`, `make VAR=...`, or by editing `variables.auto.pkrvars.hcl`:
 
 | Variable | Default | Notes |
 |---|---|---|
 | `hardening_profile` | `cis-l1` | `base` \| `cis-l1` \| `cis-l2`; Makefile overrides per target |
 | `ntp_servers` | `""` | Space-separated; empty keeps public Ubuntu pool; set for airgapped sites |
 | `patch_on_first_boot` | `false` | Enables cloud-init `package_upgrade` on first boot |
-| `reset_agent_zip` | `""` | Absolute path to `CloudResetPwdAgent.zip`; consumed by `finalize.sh` |
 | `disk_size` | `40G` | Keep ≤ 128G for HCS |
 | `git_sha` | `nogit` | Makefile passes `git rev-parse --short HEAD` automatically |
+
+**Makefile-only variable** — passed directly to `finalize.sh`, not a Packer variable:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RESET_AGENT` | `""` | Absolute path to `CloudResetPwdAgent.zip`; e.g. `make cis-l1 RESET_AGENT=/path/to/agent.zip` |
 
 ## Artifacts
 

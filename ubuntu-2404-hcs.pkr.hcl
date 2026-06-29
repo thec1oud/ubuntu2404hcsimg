@@ -60,14 +60,6 @@ variable "git_sha" {
   default = "nogit"
 }
 
-# Optional: absolute path to CloudResetPwdAgent.zip obtained from YOUR HCS
-# environment. Leave empty to skip the agent (see README for the security
-# trade-off). The package is environment-specific; there is no public URL.
-variable "reset_agent_zip" {
-  type    = string
-  default = ""
-}
-
 # Space-separated NTP hosts for chrony (e.g. "ntp1.corp ntp2.corp"). If set, the
 # public Ubuntu pool is disabled in the image (airgap-safe). Empty = keep pool.
 variable "ntp_servers" {

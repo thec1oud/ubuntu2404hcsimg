@@ -33,12 +33,13 @@ virt-customize -a "$IMG" \
 # access. Skipping it is a valid enterprise choice.
 if [ -n "$AGENT_ZIP" ] && [ -f "$AGENT_ZIP" ]; then
   echo "==> Installing one-click password reset agent from $AGENT_ZIP"
+  AGENT_BASENAME="$(basename "$AGENT_ZIP")"
   virt-customize -a "$IMG" \
     --copy-in "$AGENT_ZIP:/tmp" \
-    --run-command 'cd /tmp && unzip -o "$(basename '"$AGENT_ZIP"')" -d /tmp/crpa && \
+    --run-command 'cd /tmp && unzip -o "'"$AGENT_BASENAME"'" -d /tmp/crpa && \
                    cd /tmp/crpa/CloudResetPwdAgent.Linux && bash setup.sh || \
                    echo "WARN: agent setup.sh path differs for your version; check the zip layout"' \
-    --run-command 'rm -rf /tmp/crpa /tmp/CloudResetPwdAgent.zip'
+    --run-command 'rm -rf /tmp/crpa /tmp/'"$AGENT_BASENAME"
 else
   echo "==> Skipping password-reset agent (none provided)"
 fi

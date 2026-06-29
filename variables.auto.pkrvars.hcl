@@ -13,7 +13,3 @@ ntp_servers = ""
 # first boot; unattended-upgrades already handles ongoing drift.
 patch_on_first_boot = false
 
-# Absolute path to the CloudResetPwdAgent.zip from YOUR HCS 8.5.1 environment.
-# Leave empty to skip the agent. (Consumed by finalize.sh, not Packer.)
-# With key-only auth this should stay empty.
-reset_agent_zip = ""
