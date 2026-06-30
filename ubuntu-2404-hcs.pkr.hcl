@@ -74,6 +74,25 @@ variable "patch_on_first_boot" {
   default = false
 }
 
+# Mount /tmp, /dev/shm, /var/tmp with nodev/nosuid/noexec (cis-l1/l2 only).
+# Set to false if your workload executes binaries from /tmp.
+variable "harden_tmp" {
+  type    = bool
+  default = true
+}
+
+# PermitRootLogin policy written into sshd config (cis-l1/l2 only).
+#   prohibit-password  — root login allowed only with a key (default; cloud-safe)
+#   no                 — root login fully disabled
+variable "ssh_permit_root" {
+  type    = string
+  default = "prohibit-password"
+  validation {
+    condition     = contains(["prohibit-password", "no"], var.ssh_permit_root)
+    error_message = "PermitRootLogin must be one of: prohibit-password, no."
+  }
+}
+
 # QEMU accelerator. Use "kvm" when /dev/kvm is available (fast); fall back to
 # "tcg" for software emulation when running inside a VM without nested KVM.
 variable "accelerator" {
@@ -151,9 +170,13 @@ build {
 
   # 2. Hardening tier (base = skipped; cis-l1 / cis-l2 applied).
   provisioner "shell" {
-    execute_command  = "sudo env {{ .Vars }} bash '{{ .Path }}'"
-    environment_vars = ["HARDENING_PROFILE=${var.hardening_profile}"]
-    script           = "${path.root}/scripts/20-harden.sh"
+    execute_command = "sudo env {{ .Vars }} bash '{{ .Path }}'"
+    environment_vars = [
+      "HARDENING_PROFILE=${var.hardening_profile}",
+      "HARDEN_TMP=${var.harden_tmp}",
+      "SSH_PERMIT_ROOT=${var.ssh_permit_root}",
+    ]
+    script = "${path.root}/scripts/20-harden.sh"
   }
 
   # 3. Seal: strip instance identity + logs, stamp in-image provenance.

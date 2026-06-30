@@ -36,10 +36,13 @@ else
 fi
 
 CI_LONG="$(sudo cloud-init status --long 2>/dev/null)"
-if [ $? -ne 0 ]; then
-  warn "cloud-init status --long failed — cannot check for errors"
+CI_EXIT=$?
+if [ -z "$CI_LONG" ]; then
+  warn "cloud-init status --long produced no output — cannot check for errors"
 elif echo "$CI_LONG" | grep -qE '^errors: \[.+\]'; then
   warn "cloud-init reported errors — check: sudo cloud-init status --long"
+elif [ "$CI_EXIT" -ne 0 ]; then
+  warn "cloud-init status --long exited $CI_EXIT — check: sudo cloud-init status --long"
 else
   ok "no cloud-init errors logged"
 fi

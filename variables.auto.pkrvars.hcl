@@ -13,3 +13,15 @@ ntp_servers = ""
 # first boot; unattended-upgrades already handles ongoing drift.
 patch_on_first_boot = false
 
+# Mount /tmp, /dev/shm, /var/tmp with nodev/nosuid/noexec (cis-l1/l2 only).
+# Set to false if your workload executes binaries from /tmp.
+harden_tmp = true
+
+# PermitRootLogin in sshd config (cis-l1/l2 only).
+# prohibit-password = root login allowed only with a key (default; cloud-safe)
+# no               = root login fully disabled
+ssh_permit_root = "prohibit-password"
+
+# QEMU accelerator. kvm = fast (requires /dev/kvm); tcg = software emulation.
+accelerator = "kvm"
+

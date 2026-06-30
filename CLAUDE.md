@@ -36,6 +36,9 @@ make cis-l2
 make cis-l1 NTP_SERVERS="ntp1.corp ntp2.corp"
 make cis-l1 PATCH=true
 make cis-l1 RESET_AGENT=/path/to/CloudResetPwdAgent.zip
+make base ACCEL=tcg                              # software emulation (no /dev/kvm)
+make cis-l1 HARDEN_TMP=false                    # skip noexec on /tmp
+make cis-l1 SSH_PERMIT_ROOT=no                  # fully block root SSH
 
 # Clean build artifacts (keeps dist/)
 make clean
@@ -56,7 +59,7 @@ Each `make <sku>` runs three sequential steps:
 
 ## Provisioner scripts
 
-Scripts run inside the build VM as root via `sudo -E bash`. Order matters:
+Scripts run inside the build VM as root via `sudo env {{ .Vars }} bash`. Order matters:
 
 - **`scripts/10-hcs-prep.sh`** — HCS platform contract: virtio modules in initramfs, cloud-init wired to the HCS OpenStack datasource (`http://169.254.169.254`), fstab → UUID, serial console, chrony, qemu-guest-agent, ubuntu-pro-client. Reads `$NTP_SERVERS` and `$PATCH_ON_FIRST_BOOT` from Packer env.
 
@@ -65,7 +68,7 @@ Scripts run inside the build VM as root via `sudo -E bash`. Order matters:
   - `cis-l1`: applies controls H1–H11 (SSH key-only + strong crypto, sysctl hardening, module blacklist, auditd, PAM/pwquality, no core dumps, AppArmor, unattended-upgrades, mount hardening, AIDE first-boot init, package trim)
   - `cis-l2`: cis-l1 plus expanded auditd, daily AIDE timer, stricter sysctl (disables IP forwarding + unprivileged userns — **breaks Kubernetes, rootless containers, NAT gateways**), extra module blacklist, tighter SSH, password history, login banners, Ctrl+Alt+Del disabled
 
-  Sub-toggles: `HARDEN_TMP=false` (skip noexec on /tmp), `SSH_PERMIT_ROOT=no` (full root SSH block).
+  Sub-toggles: `harden_tmp=false` (skip noexec on /tmp), `ssh_permit_root=no` (full root SSH block). Pass via `make HARDEN_TMP=false` or `-var 'harden_tmp=false'`.
 
 - **`scripts/99-seal.sh`** — Strips instance identity: truncates machine-id, removes SSH host keys, wipes logs, clears cloud-init state, removes bash history and network leases. Stamps `/etc/hcs-image-build.txt` with provenance (profile, git commit, base image sha256).
 
@@ -89,9 +92,13 @@ Scripts run inside the build VM as root via `sudo -E bash`. Order matters:
 
 | Variable | Default | Notes |
 |---|---|---|
+| `image_name` | `"ubuntu-2404-hcs"` | Base name for output files; also drives `vm_name` in Packer |
 | `hardening_profile` | `cis-l1` | `base` \| `cis-l1` \| `cis-l2`; Makefile overrides per target |
 | `ntp_servers` | `""` | Space-separated; empty keeps public Ubuntu pool; set for airgapped sites |
 | `patch_on_first_boot` | `false` | Enables cloud-init `package_upgrade` on first boot |
+| `harden_tmp` | `true` | Mount /tmp,/dev/shm,/var/tmp noexec (cis-l1/l2); set `false` for workloads that exec from /tmp |
+| `ssh_permit_root` | `"prohibit-password"` | `PermitRootLogin` in sshd: `prohibit-password` (key-only root) or `no` (full block) |
+| `accelerator` | `"kvm"` | QEMU accelerator: `kvm` (fast, needs /dev/kvm) or `tcg` (software, no KVM required) |
 | `disk_size` | `40G` | Keep ≤ 128G for HCS |
 | `git_sha` | `nogit` | Makefile passes `git rev-parse --short HEAD` automatically |
 

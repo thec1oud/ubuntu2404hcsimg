@@ -11,6 +11,8 @@
 #   make cis-l1 PATCH=true
 #   make cis-l1 RESET_AGENT=/path/CloudResetPwdAgent.zip   # (skip with key-only)
 #   make base ACCEL=tcg                                     # software emulation (no /dev/kvm)
+#   make cis-l1 HARDEN_TMP=false                           # skip noexec on /tmp (exec-from-tmp workloads)
+#   make cis-l1 SSH_PERMIT_ROOT=no                         # fully block root SSH (default: prohibit-password)
 #
 # Validation (offline, on the built qcow2):
 #   make check-base / make check-cis-l1 / make check-cis-l2
@@ -39,6 +41,12 @@ endif
 ifdef ACCEL
 PACKER_VARS += -var 'accelerator=$(ACCEL)'
 endif
+ifdef HARDEN_TMP
+PACKER_VARS += -var 'harden_tmp=$(HARDEN_TMP)'
+endif
+ifdef SSH_PERMIT_ROOT
+PACKER_VARS += -var 'ssh_permit_root=$(SSH_PERMIT_ROOT)'
+endif
 
 .PHONY: all base cis-l1 cis-l2 prepare init validate setup check check-base check-cis-l1 check-cis-l2 clean distclean
 
@@ -50,14 +58,14 @@ build/image.sha256:
 
 setup:
 	@echo "=== Installing build dependencies ==="
-	sudo apt-get update -qq
-	sudo apt-get install -y qemu-system-x86 qemu-utils libguestfs-tools gnupg curl xorriso
+	sudo apt-get -o DPkg::Lock::Timeout=60 update -qq
+	sudo apt-get -o DPkg::Lock::Timeout=60 install -y qemu-system-x86 qemu-utils libguestfs-tools gnupg curl xorriso
 	@if ! { command -v packer &>/dev/null && packer version 2>/dev/null | grep -qE '^Packer v[0-9]'; }; then \
 	  echo "--- Installing HashiCorp Packer ---"; \
 	  curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
 	  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $$(. /etc/os-release && echo $$VERSION_CODENAME) main" \
 	    | sudo tee /etc/apt/sources.list.d/hashicorp.list; \
-	  sudo apt-get update -qq && sudo apt-get install -y packer; \
+	  sudo apt-get -o DPkg::Lock::Timeout=60 update -qq && sudo apt-get -o DPkg::Lock::Timeout=60 install -y packer; \
 	fi
 	chmod +x validate.sh scripts/validate-instance.sh
 	@echo "=== Setup complete — run 'make prepare' next ==="
@@ -75,9 +83,9 @@ base cis-l1 cis-l2: prepare init
 	rm -rf output/$@
 	packer build $(PACKER_VARS) -var 'hardening_profile=$@' .
 	./finalize.sh output/$@/$(IMAGE_NAME)-$@.qcow2 $(RESET_AGENT)
-	bash validate.sh output/$@/$(IMAGE_NAME)-$@.qcow2 $@
 	@mkdir -p $(DIST)
 	cp output/$@/$(IMAGE_NAME)-$@.qcow2 $(DIST)/$(IMAGE_NAME)-$@-$(SHA).qcow2
+	bash validate.sh $(DIST)/$(IMAGE_NAME)-$@-$(SHA).qcow2 $@
 	@{ \
 	  echo '{'; \
 	  echo '  "image": "$(IMAGE_NAME)",'; \
