@@ -22,7 +22,7 @@ apt-get update
 # matching what the stock AWS/Azure images retain.
 apt-get install -y --no-install-recommends \
   cloud-init cloud-guest-utils chrony qemu-guest-agent \
-  vlan ifenslave ubuntu-pro-client
+  vlan ifenslave ubuntu-pro-client gdisk
 # Never let autoremove strip the Pro client during the hardening trim.
 apt-mark manual ubuntu-pro-client >/dev/null 2>&1 || true
 
@@ -101,6 +101,17 @@ ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 echo "==> [5/9] fstab + GRUB: reference the root filesystem by UUID"
 # Ubuntu's cloud image mounts root via LABEL=cloudimg-rootfs. HCS asks for UUID
 # in fstab and GRUB.
+
+# After qemu-img resize expands the disk, the GPT secondary (backup) header is
+# left at the old LBA rather than the new end of disk. Relocate it now so the
+# GPT is consistent before update-grub reads partition layout.
+# sgdisk -e: move backup GPT header to end of disk; gdisk package required.
+ROOT_DISK="$(lsblk -ndo PKNAME "$(findmnt -no SOURCE /)" 2>/dev/null || true)"
+if [ -n "$ROOT_DISK" ] && command -v sgdisk &>/dev/null; then
+  sgdisk -e "/dev/${ROOT_DISK}" || true
+  echo "    GPT secondary header relocated to end of /dev/${ROOT_DISK}"
+fi
+
 ROOT_SRC="$(findmnt -no SOURCE /)"
 ROOT_UUID="$(blkid -s UUID -o value "$ROOT_SRC")"
 if [ -n "$ROOT_UUID" ]; then

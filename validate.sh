@@ -18,6 +18,33 @@ PROFILE="${2:?usage: validate.sh <image.qcow2> <profile>}"
 
 [ -f "$IMG" ] || { echo "ERROR: image not found: $IMG" >&2; exit 1; }
 
+# libguestfs (virt-cat, virt-ls, guestfish) boots a mini appliance via supermin.
+# supermin requires BOTH /dev/kvm AND the running kernel's module tree at
+# /lib/modules/$(uname -r)/. Force TCG when either is missing so virt-* calls
+# succeed in containers/cloud-VMs where /dev/kvm is present but the module tree
+# is not mounted (QEMU can use KVM; supermin cannot).
+if [ ! -e /dev/kvm ] || [ ! -d "/lib/modules/$(uname -r)" ]; then
+  export LIBGUESTFS_BACKEND_SETTINGS=force_tcg
+fi
+
+# Ubuntu sets /boot/vmlinuz-* to mode 0600 (root-only) as a KASLR mitigation.
+# supermin needs to read the running kernel to build its appliance and fails with
+# "Permission denied" for non-root callers. Make a readable temp copy via sudo
+# when needed and point supermin at it. The copy is only used for the throwaway
+# appliance VM — it never enters the golden image. Cleaned up on exit via trap.
+_KERNEL="/boot/vmlinuz-$(uname -r)"
+if [ -f "$_KERNEL" ] && [ ! -r "$_KERNEL" ]; then
+  _TMPKERNEL="$(mktemp /tmp/vmlinuz-XXXXXX)"
+  if sudo cp "$_KERNEL" "$_TMPKERNEL" 2>/dev/null && chmod 644 "$_TMPKERNEL"; then
+    export SUPERMIN_KERNEL="$_TMPKERNEL"
+    export SUPERMIN_MODULES="/lib/modules/$(uname -r)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$_TMPKERNEL'" EXIT
+  else
+    rm -f "$_TMPKERNEL" 2>/dev/null || true
+  fi
+fi
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 NPASS=0; NFAIL=0; NWARN=0
@@ -149,10 +176,16 @@ else
   fail "ssh_pwauth not disabled in 96-hcs-tuning.cfg"
 fi
 
-if vexists /etc/systemd/system/multi-user.target.wants/qemu-guest-agent.service; then
-  ok "qemu-guest-agent enabled"
+# qemu-guest-agent is device-activated on Ubuntu 24.04: it has no [Install]
+# WantedBy=multi-user.target section; instead it BindsTo the virtio-serial port
+# device unit and starts automatically when that device appears at runtime.
+# "systemctl enable" is therefore a no-op (the unit is "static"). Check for the
+# binary instead — presence proves the package is installed and the agent will
+# start on HCS where the virtio-ports device is always present.
+if vexists /usr/sbin/qemu-ga; then
+  ok "qemu-guest-agent installed (/usr/sbin/qemu-ga) — starts via device activation"
 else
-  warn "qemu-guest-agent not in multi-user.target.wants — verify it is enabled"
+  fail "qemu-guest-agent binary missing — package was not installed"
 fi
 
 if vexists /etc/systemd/system/multi-user.target.wants/chrony.service; then

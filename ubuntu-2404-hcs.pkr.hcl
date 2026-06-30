@@ -135,8 +135,13 @@ build {
   #    networking, fstab->UUID, time sync, Pro client, optional first-boot patch.
   #    (The one-click password-reset agent is installed offline in finalize.sh,
   #    since the package is specific to your HCS environment.)
+  #
+  # NOTE: execute_command uses "sudo env {{ .Vars }}" rather than "sudo -E" because
+  # Ubuntu's default sudoers has "Defaults env_reset", which strips custom
+  # environment variables even when -E is passed. Prefixing with "env VAR=val ..."
+  # (expanded by {{ .Vars }}) passes them as arguments to env, bypassing env_reset.
   provisioner "shell" {
-    execute_command = "sudo -E bash '{{ .Path }}'"
+    execute_command = "sudo env {{ .Vars }} bash '{{ .Path }}'"
     environment_vars = [
       "NTP_SERVERS=${var.ntp_servers}",
       "PATCH_ON_FIRST_BOOT=${var.patch_on_first_boot}",
@@ -146,14 +151,14 @@ build {
 
   # 2. Hardening tier (base = skipped; cis-l1 / cis-l2 applied).
   provisioner "shell" {
-    execute_command  = "sudo -E bash '{{ .Path }}'"
+    execute_command  = "sudo env {{ .Vars }} bash '{{ .Path }}'"
     environment_vars = ["HARDENING_PROFILE=${var.hardening_profile}"]
     script           = "${path.root}/scripts/20-harden.sh"
   }
 
   # 3. Seal: strip instance identity + logs, stamp in-image provenance.
   provisioner "shell" {
-    execute_command = "sudo -E bash '{{ .Path }}'"
+    execute_command = "sudo env {{ .Vars }} bash '{{ .Path }}'"
     environment_vars = [
       "IMAGE_PROFILE=${var.hardening_profile}",
       "GIT_SHA=${var.git_sha}",
