@@ -35,10 +35,13 @@ else
   fail "cloud-init status: $CI_STATUS (expected 'done')"
 fi
 
-if ! sudo cloud-init status --long 2>/dev/null | grep -qE '^errors: \[.+\]'; then
-  ok "no cloud-init errors logged"
-else
+CI_LONG="$(sudo cloud-init status --long 2>/dev/null)"
+if [ $? -ne 0 ]; then
+  warn "cloud-init status --long failed — cannot check for errors"
+elif echo "$CI_LONG" | grep -qE '^errors: \[.+\]'; then
   warn "cloud-init reported errors — check: sudo cloud-init status --long"
+else
+  ok "no cloud-init errors logged"
 fi
 
 # ── Instance identity: unique per instance ────────────────────────────────────

@@ -65,11 +65,16 @@ else
   fail "machine-id not empty: '$MACHINE_ID' — seal step did not run"
 fi
 
-HOST_KEY_COUNT="$(vls /etc/ssh | grep -c '^ssh_host_' || true)"
-if [ "${HOST_KEY_COUNT:-0}" -eq 0 ]; then
-  ok "no SSH host keys shipped"
+SSH_LS="$(virt-ls -a "$IMG" /etc/ssh 2>/dev/null)"
+if [ $? -ne 0 ]; then
+  fail "could not list /etc/ssh in image — libguestfs error"
 else
-  fail "${HOST_KEY_COUNT} SSH host key file(s) found in image"
+  HOST_KEY_COUNT="$(echo "$SSH_LS" | grep -c '^ssh_host_' || true)"
+  if [ "${HOST_KEY_COUNT:-0}" -eq 0 ]; then
+    ok "no SSH host keys shipped"
+  else
+    fail "${HOST_KEY_COUNT} SSH host key file(s) found in image"
+  fi
 fi
 
 if ! vexists /var/lib/cloud/instance; then
@@ -159,8 +164,9 @@ fi
 # ── 5. DNS ────────────────────────────────────────────────────────────────────
 hdr "DNS (systemd-resolved)"
 
-if vcat /etc/systemd/resolved.conf.d/10-hcs-fallback.conf | grep -qE '^DNS='; then
-  DNS_LINE="$(vcat /etc/systemd/resolved.conf.d/10-hcs-fallback.conf | grep '^DNS=')"
+FALLBACK_CONF="$(vcat /etc/systemd/resolved.conf.d/10-hcs-fallback.conf)"
+DNS_LINE="$(echo "$FALLBACK_CONF" | grep '^DNS=')"
+if [ -n "$DNS_LINE" ]; then
   ok "10-hcs-fallback.conf: $DNS_LINE"
 else
   fail "10-hcs-fallback.conf missing or has no DNS= line"
@@ -235,11 +241,10 @@ if [ "$PROFILE" != "base" ]; then
     fail "80-hcs.rules missing"
   fi
 
-  IMMUTABLE="$(vcat /etc/audit/rules.d/99-immutable.rules | tr -d '[:space:]')"
-  if [ "$IMMUTABLE" = "-e2" ]; then
+  if vcat /etc/audit/rules.d/99-immutable.rules | grep -qxF '-e 2'; then
     ok "99-immutable.rules: -e 2 (immutable, loads last)"
   else
-    fail "99-immutable.rules missing or malformed: '${IMMUTABLE}'"
+    fail "99-immutable.rules missing or does not contain '-e 2'"
   fi
 
   hdr "Hardening: sysctl ($PROFILE)"
@@ -282,13 +287,13 @@ if [ "$PROFILE" != "base" ]; then
     fail "80-hcs.conf (pwquality) missing"
   fi
 
-  if vcat /etc/security/faillock.conf | grep -q 'deny = 5'; then
+  if vcat /etc/security/faillock.conf | grep -vE '^\s*#' | grep -qE '^deny\s*=\s*5'; then
     ok "faillock deny=5"
   else
     fail "faillock.conf missing or deny not set to 5"
   fi
 
-  if vcat /etc/login.defs | grep -q 'UMASK.*027'; then
+  if vcat /etc/login.defs | grep -vE '^\s*#' | grep -qE '^UMASK[[:space:]].*027'; then
     ok "login.defs UMASK 027"
   else
     fail "UMASK not set to 027 in login.defs"

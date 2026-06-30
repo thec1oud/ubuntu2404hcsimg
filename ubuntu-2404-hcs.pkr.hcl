@@ -74,6 +74,17 @@ variable "patch_on_first_boot" {
   default = false
 }
 
+# QEMU accelerator. Use "kvm" when /dev/kvm is available (fast); fall back to
+# "tcg" for software emulation when running inside a VM without nested KVM.
+variable "accelerator" {
+  type    = string
+  default = "kvm"
+  validation {
+    condition     = contains(["kvm", "tcg", "hvf", "whpx"], var.accelerator)
+    error_message = "Accelerator must be one of: kvm, tcg, hvf, whpx."
+  }
+}
+
 locals {
   base_image = "${path.root}/build/noble-server-cloudimg-amd64.img"
   base_sha   = trimspace(file("${path.root}/build/image.sha256"))
@@ -87,7 +98,7 @@ source "qemu" "ubuntu2404" {
   disk_size        = var.disk_size
   format           = "qcow2"
 
-  accelerator      = "kvm"
+  accelerator      = var.accelerator
   cpus             = 2
   memory           = 2048
   headless         = true
@@ -111,6 +122,10 @@ source "qemu" "ubuntu2404" {
   shutdown_command = "sudo shutdown -P now"
   output_directory = "${var.output_dir}/${var.hardening_profile}"
   vm_name          = "${var.image_name}-${var.hardening_profile}.qcow2"
+
+  # Capture serial console to a file so boot failures can be diagnosed when SSH
+  # times out. stdio would conflict with Packer's headless process management.
+  qemuargs = [["-serial", "file:${var.output_dir}/${var.hardening_profile}/serial.log"]]
 }
 
 build {
