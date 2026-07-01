@@ -146,13 +146,20 @@ reports (or, if it reports `config-drive`, drop the URL and rely on the
 
 Default (what this build ships): **let cloud-init render the network from the
 HCS datasource**, exactly like the stock HCS image. This honours both DHCP and
-platform-assigned static IPs, and is why there is *no* custom netplan in the
-build.
+platform-assigned static IPs. The seal step (`99-seal.sh`) ships one Netplan
+file — `/etc/netplan/99-hcs-fallback.yaml` — as a hardware-agnostic DHCP
+bootstrap for the very first boot, before cloud-init has had a chance to render
+its config and reach the metadata service. The file uses `match: name: "en*"` so
+it matches any virtio NIC regardless of PCI slot or MAC. Once cloud-init renders
+`/etc/netplan/50-cloud-init.yaml`, that file's systemd-networkd unit
+(`50-netplan-*.network`) sorts alphabetically before the fallback's unit
+(`99-netplan-any-eth.network`), and systemd-networkd's first-match-wins rule
+means cloud-init's config takes full precedence from that point forward.
 
 Alternative (only if you deliberately want to ignore platform network config and
-force DHCP on every NIC): add a drop-in and a netplan instead. Useful in some
-homogeneous fleets, but it will override static-IP ports — don't use it unless
-that's what you want.
+force DHCP on every NIC): disable cloud-init network rendering and replace the
+fallback with an unconditional config. Useful in some homogeneous fleets, but it
+will override static-IP ports — don't use it unless that's what you want.
 
 ```bash
 # In scripts/10-hcs-prep.sh, replace the section [4] body with:

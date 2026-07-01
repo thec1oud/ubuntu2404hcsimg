@@ -58,6 +58,9 @@ rm -f /var/lib/systemd/network/*.lease 2>/dev/null || true
 # NetworkManager (if present)
 rm -f /var/lib/NetworkManager/*.lease \
       /var/lib/NetworkManager/internal-*.conf 2>/dev/null || true
+# Persistent NM connection profiles carry MAC addresses and interface names.
+# Remove them so the new instance is not biased toward the build NIC.
+rm -rf /etc/NetworkManager/system-connections/ 2>/dev/null || true
 
 # 2. Remove build-time Netplan configs.
 #    cloud-init renders /etc/netplan/50-cloud-init.yaml during the Packer build
@@ -75,10 +78,18 @@ rm -f /etc/netplan/*.yaml /etc/netplan/*.yml 2>/dev/null || true
 #    are referenced, so it works regardless of which PCI slot or MAC the hypervisor
 #    assigns.  This breaks the chicken-and-egg deadlock: the NIC gets a DHCP lease
 #    on first boot, cloud-init can then reach the HCS OpenStack metadata service
-#    (169.254.169.254), and its rendered 50-cloud-init.yaml (alphabetically later)
-#    supersedes this file once the platform config is applied.
+#    (169.254.169.254), and its rendered 50-cloud-init.yaml is then applied.
+#
+#    NAMING: the file is intentionally named 99-hcs-fallback.yaml.  Netplan names
+#    the generated systemd-networkd unit after the YAML file's numeric prefix
+#    (e.g. 99-netplan-any-eth.network).  systemd-networkd applies the first
+#    alphabetical match per interface and ignores all later ones.  Because
+#    cloud-init renders 50-cloud-init.yaml, its unit (50-netplan-*.network) sorts
+#    BEFORE the fallback (99-netplan-any-eth.network) and wins once cloud-init has
+#    run.  On the very first boot (before cloud-init renders its config) only the
+#    fallback unit exists, so the NIC gets a DHCP lease and cloud-init can proceed.
 mkdir -p /etc/netplan
-cat > /etc/netplan/10-hcs-fallback.yaml <<'NETPLAN'
+cat > /etc/netplan/99-hcs-fallback.yaml <<'NETPLAN'
 network:
   version: 2
   ethernets:
@@ -89,7 +100,7 @@ network:
       dhcp6: false
       optional: true
 NETPLAN
-chmod 600 /etc/netplan/10-hcs-fallback.yaml
+chmod 600 /etc/netplan/99-hcs-fallback.yaml
 
 echo "==> Seal: restore resolv.conf symlink"
 # Restore the canonical symlink — truncating would corrupt systemd-resolved's

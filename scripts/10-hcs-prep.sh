@@ -71,10 +71,14 @@ EOF
 
 echo "==> [4/10] Networking: let cloud-init render from the HCS datasource"
 # The HCS OpenStack datasource provides network config, so we let cloud-init
-# apply it — same behaviour as the stock HCS image. Do NOT ship a competing
-# static netplan or disable cloud-init's network rendering. (If you specifically
-# want to ignore platform network config and force DHCP on all NICs instead,
-# see the "Networking strategy" note in the README.)
+# apply it — same behaviour as the stock HCS image. Do NOT disable cloud-init's
+# network rendering. (If you specifically want to ignore platform network config
+# and force DHCP on all NICs instead, see the "Networking strategy" note in
+# the README.)
+# NOTE: 99-seal.sh writes /etc/netplan/99-hcs-fallback.yaml as a hardware-agnostic
+# DHCP bootstrap for the very first boot (before cloud-init has rendered its config).
+# That file is named with prefix 99- so cloud-init's 50-cloud-init.yaml generates
+# a higher-priority systemd-networkd unit and wins once cloud-init has run.
 # Clear any persistent net-naming rules so no fixed MAC->iface mapping ships.
 rm -f /etc/udev/rules.d/70-persistent-net.rules \
       /etc/udev/rules.d/*persistent*net*.rules 2>/dev/null || true

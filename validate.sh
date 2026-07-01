@@ -218,6 +218,25 @@ else
   fail "watchdog.service not enabled — symlink missing from default.target.wants"
 fi
 
+# ── 4b. Netplan fallback ──────────────────────────────────────────────────────
+hdr "Netplan fallback"
+
+if vexists /etc/netplan/99-hcs-fallback.yaml; then
+  NETPLAN_FALLBACK="$(vcat /etc/netplan/99-hcs-fallback.yaml)"
+  if echo "$NETPLAN_FALLBACK" | grep -q 'dhcp4: true' && \
+     echo "$NETPLAN_FALLBACK" | grep -q 'name: "en\*"'; then
+    ok "99-hcs-fallback.yaml present with en* DHCP bootstrap"
+  else
+    fail "99-hcs-fallback.yaml present but dhcp4 or en* match is missing"
+  fi
+else
+  fail "99-hcs-fallback.yaml missing — first-boot NIC bootstrap will not work"
+fi
+
+if vexists /etc/netplan/10-hcs-fallback.yaml; then
+  fail "stale 10-hcs-fallback.yaml present — its networkd unit sorts before cloud-init's 50-netplan-*.network and will permanently suppress HCS platform networking"
+fi
+
 # ── 5. DNS ────────────────────────────────────────────────────────────────────
 hdr "DNS (systemd-resolved)"
 

@@ -80,7 +80,7 @@ Scripts run inside the build VM as root via `sudo env {{ .Vars }} bash`. Order m
 
 - **AIDE DB is not baked.** Initialised on first boot after cloud-init via `hcs-aide-init.service` (conditional on `/var/lib/aide/aide.db` not existing), because host keys and machine-id change on first boot.
 
-- **Networking comes from the HCS datasource.** No competing static netplan is shipped. The OpenStack datasource at `169.254.169.254` provides network config (`net,ver=2`), matching the behaviour of the stock HCS image. See README for the opt-in DHCP-override snippet.
+- **Networking comes from the HCS datasource.** The OpenStack datasource at `169.254.169.254` provides network config (`net,ver=2`), matching the behaviour of the stock HCS image. See README for the opt-in DHCP-override snippet. A hardware-agnostic DHCP fallback (`/etc/netplan/99-hcs-fallback.yaml`, `match: name: "en*"`) is shipped by `99-seal.sh` to bootstrap the NIC on the very first boot before cloud-init has rendered its config; cloud-init's `50-cloud-init.yaml` generates a higher-priority networkd unit (`50-netplan-*.network` < `99-netplan-any-eth.network`) and takes precedence once applied.
 
 - **auditd `-e 2` (immutable) lives in `99-immutable.rules`**, sorted last, so the L2 `81-hcs-l2.rules` loads before it is applied.
 
