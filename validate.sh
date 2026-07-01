@@ -334,7 +334,7 @@ if [ "$PROFILE" != "base" ]; then
     fail "80-hcs.rules missing"
   fi
 
-  if vcat /etc/audit/rules.d/99-immutable.rules | grep -qxF '-e 2'; then
+  if vcat /etc/audit/rules.d/99-immutable.rules | grep -qxF -- '-e 2'; then
     ok "99-immutable.rules: -e 2 (immutable, loads last)"
   else
     fail "99-immutable.rules missing or does not contain '-e 2'"
