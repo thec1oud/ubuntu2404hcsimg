@@ -161,7 +161,7 @@ EOF
 # The immutable flag (-e 2) MUST be the last rule loaded across ALL rules.d
 # files, so it lives in its own 99-sorted file — otherwise it would block the
 # cis-l2 81-* rules from loading.
-echo '-e 2' > /etc/audit/rules.d/99-immutable.rules
+printf '%s\n' '-e 2' > /etc/audit/rules.d/99-immutable.rules
 systemctl enable auditd
 
 ###############################################################################

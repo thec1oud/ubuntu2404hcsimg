@@ -350,8 +350,8 @@ if [ "$PROFILE" != "base" ]; then
 
   hdr "Hardening: AppArmor ($PROFILE)"
 
-  if vexists /etc/systemd/system/multi-user.target.wants/apparmor.service; then
-    ok "AppArmor enabled (in multi-user.target.wants)"
+  if vexists /etc/systemd/system/sysinit.target.wants/apparmor.service; then
+    ok "AppArmor enabled (in sysinit.target.wants)"
   else
     fail "AppArmor not enabled — H7 step may have failed"
   fi
