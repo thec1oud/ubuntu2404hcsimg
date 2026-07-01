@@ -363,11 +363,18 @@ jobs:
       - name: Decode RESET_AGENT secret
         if: ${{ env.RESET_AGENT_B64 != '' }}
         run: |
+          # Strip all whitespace (newlines from encoding without -w0, accidental
+          # spaces in the secret value) so base64 -d receives clean input.
+          B64_CLEAN="${RESET_AGENT_B64//[[:space:]]/}"
+          if [ -z "$B64_CLEAN" ]; then
+            echo "RESET_AGENT_B64 is whitespace-only — skipping agent installation"
+            exit 0
+          fi
           AGENT_PATH="$(mktemp /tmp/CloudResetPwdAgent-XXXXXX.zip)"
           # Write path to GITHUB_ENV immediately so the cleanup step always has
           # the path, even if the integrity check below fails and the step exits.
           echo "RESET_AGENT_PATH=${AGENT_PATH}" >> "$GITHUB_ENV"
-          printf '%s' "${RESET_AGENT_B64}" | base64 -d > "$AGENT_PATH"
+          printf '%s' "$B64_CLEAN" | base64 -d > "$AGENT_PATH"
           python3 -c "
           import zipfile, sys
           result = zipfile.ZipFile(sys.argv[1]).testzip()
