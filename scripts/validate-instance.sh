@@ -156,6 +156,29 @@ else
   warn "qemu-guest-agent is not active — HCS console/metadata features may not work"
 fi
 
+# ── Watchdog ─────────────────────────────────────────────────────────────────
+hdr "Watchdog"
+
+if [ -f /etc/watchdog.conf ] && [ -f /etc/modules-load.d/hcs-watchdog.conf ]; then
+  ok "watchdog package configured (watchdog.conf + modules-load.d)"
+else
+  fail "watchdog config missing — image may not have been built with watchdog support"
+fi
+
+if [ -e /dev/watchdog ]; then
+  if systemctl is-active watchdog >/dev/null 2>&1; then
+    ok "watchdog.service active (/dev/watchdog present)"
+  else
+    fail "/dev/watchdog present but watchdog.service is not active — keepalives not sent; ECS will force-reset"
+  fi
+else
+  if systemctl is-enabled watchdog >/dev/null 2>&1; then
+    ok "watchdog.service enabled; /dev/watchdog absent (watchdog not enabled for this ECS — expected)"
+  else
+    warn "watchdog.service not enabled — enable it in the ECS console to use the watchdog feature"
+  fi
+fi
+
 # ── Hardening: cis-l1 and cis-l2 ─────────────────────────────────────────────
 if [ "$PROFILE" = "cis-l1" ] || [ "$PROFILE" = "cis-l2" ]; then
 

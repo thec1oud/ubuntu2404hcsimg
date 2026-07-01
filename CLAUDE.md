@@ -61,7 +61,7 @@ Each `make <sku>` runs three sequential steps:
 
 Scripts run inside the build VM as root via `sudo env {{ .Vars }} bash`. Order matters:
 
-- **`scripts/10-hcs-prep.sh`** — HCS platform contract: virtio modules in initramfs, cloud-init wired to the HCS OpenStack datasource (`http://169.254.169.254`), fstab → UUID, serial console, chrony, qemu-guest-agent, ubuntu-pro-client. Reads `$NTP_SERVERS` and `$PATCH_ON_FIRST_BOOT` from Packer env.
+- **`scripts/10-hcs-prep.sh`** — HCS platform contract: virtio modules in initramfs, cloud-init wired to the HCS OpenStack datasource (`http://169.254.169.254`), fstab → UUID, serial console, chrony, qemu-guest-agent, ubuntu-pro-client, i6300ESB watchdog. Reads `$NTP_SERVERS` and `$PATCH_ON_FIRST_BOOT` from Packer env.
 
 - **`scripts/20-harden.sh`** — Profile-aware hardening. Reads `$HARDENING_PROFILE`:
   - `base`: exits immediately (no-op — HCS contract only)
@@ -99,7 +99,7 @@ Scripts run inside the build VM as root via `sudo env {{ .Vars }} bash`. Order m
 | `harden_tmp` | `true` | Mount /tmp,/dev/shm,/var/tmp noexec (cis-l1/l2); set `false` for workloads that exec from /tmp |
 | `ssh_permit_root` | `"prohibit-password"` | `PermitRootLogin` in sshd: `prohibit-password` (key-only root) or `no` (full block) |
 | `accelerator` | `"kvm"` | QEMU accelerator: `kvm` (fast, needs /dev/kvm) or `tcg` (software, no KVM required) |
-| `disk_size` | `40G` | Keep ≤ 128G for HCS |
+| `disk_size` | `10G` | Keep ≤ 128G for HCS |
 | `git_sha` | `nogit` | Makefile passes `git rev-parse --short HEAD` automatically |
 
 **Makefile-only variable** — passed directly to `finalize.sh`, not a Packer variable:

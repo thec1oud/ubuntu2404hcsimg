@@ -96,7 +96,7 @@ footer of `scripts/20-harden.sh`).
 | `hardening_profile` | `cis-l1` | `base` \| `cis-l1` \| `cis-l2` (the Makefile sets this per target) |
 | `ntp_servers` | `""` | Space-separated NTP hosts for chrony. **Set for production**; if set, the public pool is disabled (airgap-safe). |
 | `patch_on_first_boot` | `false` | Apply security updates on first boot, like stock AWS/Azure images. Slows first boot. |
-| `disk_size` | `40G` | System disk size (keep ≤ 128G). |
+| `disk_size` | `10G` | System disk size (keep ≤ 128G). |
 
 **Makefile-only variable** (passed directly to `finalize.sh`, not via Packer):
 
@@ -116,8 +116,8 @@ to those clouds' control planes and are deliberately **not** included; on HCS
 they'd be inert or counterproductive. The portable equivalents are all present:
 clean GPG-verified base, OpenStack datasource, `qemu-guest-agent`, `ubuntu-pro-client`
 (for ESM/Livepatch/USG/FIPS attach), chrony time sync, root-disk auto-grow,
-host-key/machine-id regen, serial console — plus a hardening baseline that
-exceeds the *minimal* stock AWS/Azure images.
+host-key/machine-id regen, serial console, i6300ESB watchdog — plus a hardening
+baseline that exceeds the *minimal* stock AWS/Azure images.
 
 ## Datasource (confirmed for this platform)
 
@@ -192,9 +192,20 @@ Launch a throwaway instance from the new image and confirm:
 - `pro status` runs (Pro client present) — attach is optional;
 - `cat /etc/machine-id` is non-empty and **differs** from a second instance;
 - `ls /etc/ssh/ssh_host_*` shows freshly generated keys (different per instance);
-- if you installed the reset agent: `systemctl status cloudResetPwdAgent`.
+- if you installed the reset agent: `systemctl status cloudResetPwdAgent`;
+- if watchdog is enabled for the instance: `systemctl status watchdog` is `active`, `dmesg | grep i6300` shows the timer initialized.
 
 Only after that, share the image to your projects/tenants.
+
+## Watchdog
+
+HCS ECS exposes a virtual **Intel i6300ESB** watchdog device when the watchdog feature is enabled for an instance (ECS console → **Manage Watchdog Status** → Enable). The image comes pre-wired:
+
+- `watchdog` package installed; `i6300esb` module loaded via `modules-load.d`
+- `/etc/watchdog.conf`: 5-second heartbeat interval, real-time priority
+- `watchdog.service` enabled with a `ConditionPathExists=/dev/watchdog` guard so it only activates on ECSes where the watchdog device is actually present
+
+No action is needed in the image or at launch — simply enable the feature in the ECS console and the daemon starts automatically on the next (or current) boot.
 
 ## What the hardening baseline does (`scripts/20-harden.sh`)
 

@@ -31,7 +31,7 @@ variable "image_name" {
 
 variable "disk_size" {
   type    = string
-  default = "40G" # keep <= 128G for HCS
+  default = "10G" # keep <= 128G for HCS
 }
 
 variable "output_dir" {

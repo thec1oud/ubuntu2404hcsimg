@@ -194,6 +194,30 @@ else
   warn "chrony not in multi-user.target.wants"
 fi
 
+if vcat /etc/modules-load.d/hcs-watchdog.conf | grep -qxF 'i6300esb'; then
+  ok "i6300esb in modules-load.d/hcs-watchdog.conf"
+else
+  fail "hcs-watchdog.conf missing or does not load i6300esb"
+fi
+
+if vcat /etc/watchdog.conf | grep -qE '^\s*watchdog-device\s*='; then
+  ok "/etc/watchdog.conf present with active watchdog-device directive"
+else
+  fail "/etc/watchdog.conf missing or watchdog-device is commented out"
+fi
+
+if vexists /etc/systemd/system/watchdog.service.d/hcs-condition.conf; then
+  ok "watchdog.service.d/hcs-condition.conf present"
+else
+  fail "watchdog.service.d/hcs-condition.conf missing"
+fi
+
+if vexists /etc/systemd/system/default.target.wants/watchdog.service; then
+  ok "watchdog.service enabled (default.target.wants)"
+else
+  fail "watchdog.service not enabled — symlink missing from default.target.wants"
+fi
+
 # ── 5. DNS ────────────────────────────────────────────────────────────────────
 hdr "DNS (systemd-resolved)"
 

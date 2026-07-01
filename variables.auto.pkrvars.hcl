@@ -2,7 +2,7 @@
 # (The Makefile sets hardening_profile per target, so this default only applies
 # to a bare `packer build .`.)
 image_name = "ubuntu-2404-hcs"
-disk_size  = "40G"
+disk_size  = "10G"
 hardening_profile = "cis-l1"   # base | cis-l1 | cis-l2
 
 # Time sync: set to your HCS/datacenter NTP (space-separated). Empty keeps the

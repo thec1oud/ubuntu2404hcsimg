@@ -47,6 +47,9 @@ endif
 ifdef SSH_PERMIT_ROOT
 PACKER_VARS += -var 'ssh_permit_root=$(SSH_PERMIT_ROOT)'
 endif
+ifdef DISK_SIZE
+PACKER_VARS += -var 'disk_size=$(DISK_SIZE)'
+endif
 
 .PHONY: all base cis-l1 cis-l2 prepare init validate setup check check-base check-cis-l1 check-cis-l2 clean distclean
 

@@ -15,7 +15,7 @@ export DEBIAN_FRONTEND=noninteractive
 NTP_SERVERS="${NTP_SERVERS:-}"
 PATCH_ON_FIRST_BOOT="${PATCH_ON_FIRST_BOOT:-false}"
 
-echo "==> [1/9] Base packages cloud-init / virtio / guest agent / Pro client"
+echo "==> [1/10] Base packages cloud-init / virtio / guest agent / Pro client"
 apt-get update
 # cloud-init ships in the cloud image already; the rest are belt-and-braces.
 # ubuntu-pro-client is kept so ESM/Livepatch/USG/FIPS can be attached later,
@@ -29,7 +29,7 @@ apt-mark manual ubuntu-pro-client >/dev/null 2>&1 || true
 systemctl enable chrony qemu-guest-agent || true
 systemctl enable cloud-init cloud-init-local cloud-config cloud-final || true
 
-echo "==> [2/9] Ensure virtio block + net drivers are in the initramfs"
+echo "==> [2/10] Ensure virtio block + net drivers are in the initramfs"
 # Ubuntu 24.04's kernel includes virtio, but a trimmed initramfs can omit it.
 # Force-include the modules and rebuild so the VM can find its root disk/NIC
 # on first boot under KVM on HCS.
@@ -39,7 +39,7 @@ for m in virtio virtio_pci virtio_blk virtio_scsi virtio_net; do
 done
 update-initramfs -u -k all
 
-echo "==> [3/9] Wire cloud-init to the HCS OpenStack metadata datasource"
+echo "==> [3/10] Wire cloud-init to the HCS OpenStack metadata datasource"
 # Confirmed on-platform (HCS 8.5.1 / ManageOne):
 #   cloud-init query subplatform -> metadata (http://169.254.169.254)
 #   datasource                   -> DataSourceOpenStackLocal [net,ver=2]
@@ -69,7 +69,7 @@ disable_root: false
 ssh_pwauth: false
 EOF
 
-echo "==> [4/9] Networking: let cloud-init render from the HCS datasource"
+echo "==> [4/10] Networking: let cloud-init render from the HCS datasource"
 # The HCS OpenStack datasource provides network config, so we let cloud-init
 # apply it — same behaviour as the stock HCS image. Do NOT ship a competing
 # static netplan or disable cloud-init's network rendering. (If you specifically
@@ -98,7 +98,7 @@ EOF
 # seal step (which removes the file) leaves an identical, correct state.
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-echo "==> [5/9] fstab + GRUB: reference the root filesystem by UUID"
+echo "==> [5/10] fstab + GRUB: reference the root filesystem by UUID"
 # Ubuntu's cloud image mounts root via LABEL=cloudimg-rootfs. HCS asks for UUID
 # in fstab and GRUB.
 
@@ -122,14 +122,14 @@ fi
 echo "    root: ${ROOT_SRC}  UUID=${ROOT_UUID}"
 cat /etc/fstab
 
-echo "==> [6/9] Console + boot settings sane for a headless cloud VM"
+echo "==> [6/10] Console + boot settings sane for a headless cloud VM"
 # Ensure serial console output (helps HCS VNC/console debugging).
 if ! grep -q "console=ttyS0" /etc/default/grub; then
   sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty1 console=ttyS0,115200n8"/' /etc/default/grub
   update-grub
 fi
 
-echo "==> [7/9] Time sync (chrony) — match a platform clock like AWS/Azure do"
+echo "==> [7/10] Time sync (chrony) — match a platform clock like AWS/Azure do"
 # HCS VMs get a stable hardware clock from the KVM host (kvm-clock); chrony adds
 # NTP discipline. AWS points at 169.254.169.123, Azure uses Hyper-V PTP; on HCS
 # you point at your datacenter NTP. Drop-in goes in conf.d (sourced by 24.04's
@@ -148,14 +148,14 @@ else
   echo "    Set NTP_SERVERS to your HCS/datacenter NTP before shipping (esp. if airgapped)."
 fi
 
-echo "==> [8/9] Confirm ubuntu-pro-client present (ESM/Livepatch/USG/FIPS attach)"
+echo "==> [8/10] Confirm ubuntu-pro-client present (ESM/Livepatch/USG/FIPS attach)"
 if dpkg -s ubuntu-pro-client >/dev/null 2>&1; then
   echo "    ubuntu-pro-client installed and marked manual."
 else
   echo "    WARN: ubuntu-pro-client missing — Pro attach (ESM/FIPS) won't work."
 fi
 
-echo "==> [9/9] Optional: apply security updates on first boot"
+echo "==> [9/10] Optional: apply security updates on first boot"
 # Stock AWS/Azure images refresh against the archive at first boot. cloud-init's
 # package_upgrade does the same, once per instance. Off by default (slows boot).
 if [ "$PATCH_ON_FIRST_BOOT" = "true" ]; then
@@ -168,5 +168,40 @@ else
   rm -f /etc/cloud/cloud.cfg.d/97-hcs-firstboot-patch.cfg
   echo "    first-boot patching disabled (unattended-upgrades still covers drift)."
 fi
+
+echo "==> [10/10] Watchdog: wire up the Intel i6300ESB watchdog for HCS"
+# HCS ECS exposes a virtual Intel 6300ESB watchdog device when the watchdog
+# feature is enabled for an instance (ECS console → Manage Watchdog Status).
+# The guest must acknowledge the heartbeat within the timeout (default 30s) or
+# the hypervisor force-resets the ECS.
+#
+# i6300esb is a PCI driver: the kernel auto-loads it when the device is present
+# on the PCI bus at boot, creating /dev/watchdog. Loading it unconditionally via
+# modules-load.d is harmless when the device is absent — the driver registers
+# but does not probe and no /dev/watchdog node is created.
+apt-get install -y --no-install-recommends watchdog
+apt-mark manual watchdog >/dev/null 2>&1 || true
+
+echo "i6300esb" > /etc/modules-load.d/hcs-watchdog.conf
+
+cat > /etc/watchdog.conf <<'EOF'
+watchdog-device = /dev/watchdog
+log-dir         = /var/log/watchdog
+interval        = 5
+realtime        = yes
+priority        = 1
+EOF
+
+# Guard the service so it only activates when /dev/watchdog is actually present
+# (i.e. the ECS was configured with watchdog). Without this, the daemon would
+# fail on every ECS where the watchdog device is disabled.
+mkdir -p /etc/systemd/system/watchdog.service.d
+cat > /etc/systemd/system/watchdog.service.d/hcs-condition.conf <<'EOF'
+[Unit]
+ConditionPathExists=/dev/watchdog
+EOF
+
+systemctl enable watchdog || true
+echo "    i6300ESB watchdog installed and enabled (activates only when device is present)."
 
 echo "==> 10-hcs-prep.sh complete"
