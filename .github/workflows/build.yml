@@ -116,6 +116,7 @@ jobs:
       base-image-sha256: ${{ steps.out.outputs.sha256 }}
       git-sha:           ${{ steps.out.outputs.git_sha }}
       build-ts:          ${{ steps.out.outputs.ts }}
+      skus:              ${{ steps.out.outputs.skus }}
 
     steps:
       - name: Checkout
@@ -241,6 +242,13 @@ jobs:
           echo "sha256=$(cat build/image.sha256)" >> "$GITHUB_OUTPUT"
           echo "git_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"    >> "$GITHUB_OUTPUT"
+          # Compute SKU list for the build matrix.
+          # On non-dispatch events or when 'all' is selected, build every SKU.
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ inputs.sku }}" == "all" ]]; then
+            echo 'skus=["base","cis-l1","cis-l2"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'skus=["${{ inputs.sku }}"]' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload prepare audit artefacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
@@ -290,17 +298,10 @@ jobs:
     permissions:
       contents: read
 
-    # Allow a specific SKU via workflow_dispatch; build all three on push/PR.
-    # inputs.sku is '' on non-dispatch events — the first clause short-circuits.
-    if: >-
-      github.event_name != 'workflow_dispatch' ||
-      inputs.sku == 'all' ||
-      inputs.sku == matrix.sku
-
     strategy:
       fail-fast: false   # let the remaining SKUs complete even if one fails
       matrix:
-        sku: [base, cis-l1, cis-l2]
+        sku: ${{ fromJSON(needs.prepare.outputs.skus) }}
 
     # All user-supplied workflow_dispatch inputs are captured here as env vars
     # and never interpolated directly into shell commands — this prevents
