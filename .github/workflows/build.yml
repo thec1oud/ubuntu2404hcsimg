@@ -57,12 +57,12 @@ on:
         default: 'all'
         type: choice
         options: [all, base, cis-l1, cis-l2]
-      accel:
-        description: 'QEMU accelerator  (kvm requires /dev/kvm on the runner)'
+      runner:
+        description: 'Runner type — ubuntu-latest uses QEMU TCG (no /dev/kvm needed; slower); self-hosted-kvm uses hardware acceleration'
         required: false
-        default: 'kvm'
+        default: 'ubuntu-latest'
         type: choice
-        options: [kvm, tcg]
+        options: [ubuntu-latest, self-hosted-kvm]
       ntp_servers:
         description: 'Space-separated NTP hosts (empty = public Ubuntu pool)'
         required: false
@@ -108,7 +108,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   prepare:
     name: Prepare base image
-    runs-on: [self-hosted, kvm]
+    runs-on: ${{ inputs.runner == 'self-hosted-kvm' && fromJSON('["self-hosted","kvm"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
 
@@ -294,7 +294,7 @@ jobs:
   build:
     name: Build ${{ matrix.sku }}
     needs: [prepare]
-    runs-on: [self-hosted, kvm]
+    runs-on: ${{ inputs.runner == 'self-hosted-kvm' && fromJSON('["self-hosted","kvm"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
 
@@ -309,7 +309,7 @@ jobs:
     env:
       SKU:                   ${{ matrix.sku }}
       GIT_SHA:               ${{ needs.prepare.outputs.git-sha }}
-      INPUT_ACCEL:           ${{ inputs.accel }}
+      INPUT_ACCEL:           ${{ inputs.runner == 'self-hosted-kvm' && 'kvm' || 'tcg' }}
       INPUT_NTP_SERVERS:     ${{ inputs.ntp_servers }}
       INPUT_PATCH:           ${{ inputs.patch_on_first_boot }}
       INPUT_HARDEN_TMP:      ${{ inputs.harden_tmp }}
@@ -517,7 +517,7 @@ jobs:
   audit:
     name: Audit bundle
     needs: [prepare, build]
-    runs-on: [self-hosted, kvm]
+    runs-on: ${{ inputs.runner == 'self-hosted-kvm' && fromJSON('["self-hosted","kvm"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     if: always() && needs.prepare.result == 'success'
@@ -605,7 +605,7 @@ jobs:
   release:
     name: GitHub Release
     needs: [prepare, build, audit]
-    runs-on: [self-hosted, kvm]
+    runs-on: ${{ inputs.runner == 'self-hosted-kvm' && fromJSON('["self-hosted","kvm"]') || 'ubuntu-latest' }}
     if: >-
       startsWith(github.ref, 'refs/tags/v') &&
       needs.build.result == 'success' &&
