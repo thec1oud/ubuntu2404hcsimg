@@ -314,6 +314,7 @@ jobs:
       INPUT_HARDEN_TMP:      ${{ inputs.harden_tmp }}
       INPUT_SSH_PERMIT_ROOT: ${{ inputs.ssh_permit_root }}
       PACKER_LOG:            1
+      RESET_AGENT_B64:       ${{ secrets.RESET_AGENT_B64 }}
 
     steps:
       - name: Checkout
@@ -359,9 +360,7 @@ jobs:
       # Decode the base64-encoded agent zip to a temp file.  The path is
       # persisted to GITHUB_ENV so the cleanup step always finds it.
       - name: Decode RESET_AGENT secret
-        if: ${{ secrets.RESET_AGENT_B64 != '' }}
-        env:
-          RESET_AGENT_B64: ${{ secrets.RESET_AGENT_B64 }}
+        if: ${{ env.RESET_AGENT_B64 != '' }}
         run: |
           AGENT_PATH="$(mktemp /tmp/CloudResetPwdAgent-XXXXXX.zip)"
           # Write path to GITHUB_ENV immediately so the cleanup step always has
