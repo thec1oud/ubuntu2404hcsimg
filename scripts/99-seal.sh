@@ -47,8 +47,51 @@ rm -rf /var/lib/cloud/instances/* /var/lib/cloud/instance 2>/dev/null || true
 echo "==> Seal: cloud-init clean so it re-runs fresh on HCS"
 cloud-init clean --logs --seed --machine-id || cloud-init clean --logs --seed || true
 
-echo "==> Seal: clear network leases; restore resolv.conf symlink"
+echo "==> Seal: generalize network configuration for hardware-agnostic boot"
+
+# 1. Remove all DHCP lease caches.
+#    Ubuntu 24.04 cloud images use systemd-networkd (not dhclient), so the
+#    actionable leases are in /var/lib/systemd/network/; /var/lib/dhcp/ is kept
+#    for completeness in case dhclient is ever installed.
 rm -f /var/lib/dhcp/* 2>/dev/null || true
+rm -f /var/lib/systemd/network/*.lease 2>/dev/null || true
+# NetworkManager (if present)
+rm -f /var/lib/NetworkManager/*.lease \
+      /var/lib/NetworkManager/internal-*.conf 2>/dev/null || true
+
+# 2. Remove build-time Netplan configs.
+#    cloud-init renders /etc/netplan/50-cloud-init.yaml during the Packer build
+#    pinned to the build VM's interface name (e.g. enp1s0) or MAC.  On an HCS
+#    instance the hypervisor assigns a new virtio NIC at a different PCI slot
+#    (e.g. enp4s3) with a new MAC, so that stale config matches nothing, the
+#    interface is never given a DHCP lease, and the instance is unreachable.
+#    cloud-init clean does NOT remove rendered /etc/netplan/ files, so we must
+#    do it explicitly here.
+rm -f /etc/netplan/*.yaml /etc/netplan/*.yml 2>/dev/null || true
+
+# 3. Write a hardware-agnostic DHCP fallback Netplan.
+#    Matches any Ethernet interface whose name starts with "en" (covers enp*, ens*,
+#    eno* — every virtio NIC naming scheme used by HCS).  No MAC and no fixed name
+#    are referenced, so it works regardless of which PCI slot or MAC the hypervisor
+#    assigns.  This breaks the chicken-and-egg deadlock: the NIC gets a DHCP lease
+#    on first boot, cloud-init can then reach the HCS OpenStack metadata service
+#    (169.254.169.254), and its rendered 50-cloud-init.yaml (alphabetically later)
+#    supersedes this file once the platform config is applied.
+mkdir -p /etc/netplan
+cat > /etc/netplan/10-hcs-fallback.yaml <<'NETPLAN'
+network:
+  version: 2
+  ethernets:
+    any-eth:
+      match:
+        name: "en*"
+      dhcp4: true
+      dhcp6: false
+      optional: true
+NETPLAN
+chmod 600 /etc/netplan/10-hcs-fallback.yaml
+
+echo "==> Seal: restore resolv.conf symlink"
 # Restore the canonical symlink — truncating would corrupt systemd-resolved's
 # stub file, and a stale regular file would shadow the FallbackDNS config.
 rm -f /etc/resolv.conf
