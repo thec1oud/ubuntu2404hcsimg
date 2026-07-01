@@ -1,0 +1,703 @@
+###############################################################################
+# .github/workflows/build.yml
+#
+# Builds the full HCS Ubuntu 24.04 image catalogue (base, cis-l1, cis-l2).
+# Produces qcow2 artefacts, QEMU serial console logs, Packer debug logs,
+# SBOM (dpkg installed-package inventory), provenance manifests, and a
+# structured JSON audit bundle for every run.
+#
+# ─── RUNNER REQUIREMENTS ────────────────────────────────────────────────────
+# All jobs target a self-hosted runner labelled 'kvm'.  The runner needs:
+#
+#   /dev/kvm               Hardware virtualisation.  The workflow detects its
+#                          absence and warns; builds fall back to TCG, which
+#                          works but takes several hours per SKU instead of
+#                          minutes.
+#   qemu-system-x86_64     QEMU with the PC machine type (build VM host).
+#   libguestfs-tools       virt-cat, virt-customize, virt-sparsify, guestfish
+#                          (validate.sh, finalize.sh, SBOM extraction).
+#   gnupg                  Canonical cloud-image GPG verification.
+#   curl                   Base image download.
+#   xorriso                Cloud-init ISO seed for the Packer QEMU plugin.
+#   python3 ≥ 3.10         SBOM extraction and audit bundle generation.
+#   packer                 Installed by 'make setup' or pre-installed.
+#   gh (GitHub CLI)        Required only by the 'release' job.
+#
+# For a GitHub-hosted runner (no KVM), set the 'accel' input to 'tcg'.
+#
+# ─── SECRETS ────────────────────────────────────────────────────────────────
+# RESET_AGENT_B64  (optional, repository or environment secret)
+#   Base64-encoded CloudResetPwdAgent.zip from your HCS console.
+#   When present the agent is installed by finalize.sh in every SKU image.
+#   Encode:  base64 -w0 CloudResetPwdAgent.zip
+#   Then store the result as the RESET_AGENT_B64 secret value.
+#
+# ─── ACTION SHA PINS ────────────────────────────────────────────────────────
+# Actions are pinned to immutable commit SHAs to prevent supply-chain
+# substitution.  Verify or update a pin with:
+#   gh api repos/actions/checkout/git/refs/tags/v4.2.2 | jq -r .object.sha
+# Use Dependabot (security-updates: true for GitHub Actions) to keep
+# pins current automatically.
+###############################################################################
+
+name: Build HCS Ubuntu 24.04 Image Catalogue
+
+on:
+  push:
+    branches: [master]
+    tags:     ['v*.*.*']
+  pull_request:
+    branches: [master]
+    types:    [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      sku:
+        description: 'SKU(s) to build'
+        required: false
+        default: 'all'
+        type: choice
+        options: [all, base, cis-l1, cis-l2]
+      accel:
+        description: 'QEMU accelerator  (kvm requires /dev/kvm on the runner)'
+        required: false
+        default: 'kvm'
+        type: choice
+        options: [kvm, tcg]
+      ntp_servers:
+        description: 'Space-separated NTP hosts (empty = public Ubuntu pool)'
+        required: false
+        default: ''
+        type: string
+      patch_on_first_boot:
+        description: 'Apply package_upgrade on first boot (slows first start)'
+        required: false
+        default: 'false'
+        type: boolean
+      harden_tmp:
+        description: 'Mount /tmp noexec/nosuid/nodev  (cis-l1/l2; set false for exec-from-tmp workloads)'
+        required: false
+        default: 'true'
+        type: boolean
+      ssh_permit_root:
+        description: 'sshd PermitRootLogin value  (cis-l1/l2 only)'
+        required: false
+        default: 'prohibit-password'
+        type: choice
+        options: ['prohibit-password', 'no']
+
+# Minimum permissions for the whole workflow.  Individual jobs narrow further.
+permissions:
+  contents: read
+
+# Never cancel an in-flight build — a partial qcow2 wastes all build time
+# already spent.  PR builds may be cancelled when a newer commit supersedes.
+concurrency:
+  group: hcs-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+###############################################################################
+# J O B S
+###############################################################################
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # prepare
+  #   Download the Canonical Noble cloud image, verify its GPG signature, pin
+  #   its SHA-256, and generate the ephemeral build SSH key.
+  #   The verified inputs are shared with build jobs via a run-scoped cache.
+  # ─────────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare base image
+    runs-on: [self-hosted, kvm]
+    permissions:
+      contents: read
+
+    outputs:
+      base-image-sha256: ${{ steps.out.outputs.sha256 }}
+      git-sha:           ${{ steps.out.outputs.git_sha }}
+      build-ts:          ${{ steps.out.outputs.ts }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install build dependencies
+        run: make setup
+
+      - name: Record installed tool versions
+        run: |
+          echo "::group::Tool versions"
+          packer version                    2>/dev/null | head -1 || true
+          qemu-system-x86_64 --version      2>/dev/null | head -1 || true
+          qemu-img --version                2>/dev/null | head -1 || true
+          virt-customize --version          2>/dev/null | head -1 || true
+          guestfish --version               2>/dev/null | head -1 || true
+          gpg --version                     2>/dev/null | head -1 || true
+          xorriso --version                 2>/dev/null | head -2 || true
+          python3 --version                 2>/dev/null          || true
+          echo "::endgroup::"
+
+      - name: Check KVM availability
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo "::notice::/dev/kvm present — KVM builds enabled"
+            ls -la /dev/kvm
+          else
+            echo "::warning::/dev/kvm absent — builds will fall back to TCG (very slow)"
+          fi
+
+      # Fetch SHA256SUMS before the cache step so hashFiles() returns the real
+      # hash.  build/ is gitignored; without this pre-fetch, hashFiles always
+      # returns an empty string and the cache key is permanently static.
+      - name: Fetch SHA256SUMS for cache key
+        run: |
+          mkdir -p build
+          curl -fsSLo build/SHA256SUMS \
+            https://cloud-images.ubuntu.com/noble/current/SHA256SUMS
+
+      # Cache the raw base image keyed on the SHA256SUMS manifest content.
+      # A cache hit means SHA256SUMS hasn't changed since the last build;
+      # prepare.sh will verify the cached image's SHA256 before using it.
+      - name: Restore base image cache
+        id: img-cache
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a  # v4.2.0
+        with:
+          path: build/noble-server-cloudimg-amd64.img
+          key: noble-cloudimg-${{ runner.os }}-${{ hashFiles('build/SHA256SUMS') }}
+
+      - name: Download and GPG-verify base image
+        run: ./prepare.sh
+
+      # Re-run gpg verify with --status-fd to capture machine-readable output.
+      # prepare.sh already aborted on a bad signature; this step only writes
+      # the audit evidence record.
+      - name: Record GPG verification evidence
+        run: |
+          mkdir -p build
+          {
+            printf "=== GPG verification of Canonical cloud-image SHA256SUMS ===\n"
+            printf "timestamp:                 %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf "expected_key_fingerprint:  D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81\n"
+            printf "key_description:           Ubuntu Cloud Image Automatic Signing Key\n\n"
+          } > build/gpg-verify.log
+
+          if [ -f /usr/share/keyrings/ubuntu-cloudimage-keyring.gpg ]; then
+            gpg --status-fd 1 \
+                --keyring /usr/share/keyrings/ubuntu-cloudimage-keyring.gpg \
+                --no-default-keyring \
+                --verify build/SHA256SUMS.gpg build/SHA256SUMS 2>&1 \
+              | tee -a build/gpg-verify.log
+          else
+            gpg --status-fd 1 \
+                --verify build/SHA256SUMS.gpg build/SHA256SUMS 2>&1 \
+              | tee -a build/gpg-verify.log
+          fi
+
+          printf "\nbase_image_sha256: %s\n" "$(cat build/image.sha256)" \
+            >> build/gpg-verify.log
+
+          if grep -qE '\[GNUPG:\] (BADSIG|NO_PUBKEY|ERRSIG|EXPKEYSIG|REVKEYSIG|KEYEXPIRED)' build/gpg-verify.log; then
+            echo "::error::GPG signature verification FAILED — aborting pipeline"
+            exit 1
+          fi
+          if ! grep -q '\[GNUPG:\] GOODSIG' build/gpg-verify.log; then
+            echo "::error::GPG verification produced no GOODSIG — aborting pipeline"
+            exit 1
+          fi
+          echo "::notice::GPG signature verified OK"
+
+      - name: Capture build environment
+        run: |
+          {
+            printf "build_timestamp:   %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf "runner_name:       %s\n" "${RUNNER_NAME:-unknown}"
+            printf "runner_os:         %s\n" "${RUNNER_OS:-$(uname -s)}"
+            printf "kernel:            %s\n" "$(uname -r)"
+            printf "arch:              %s\n" "$(uname -m)"
+            printf "cpu_cores:         %s\n" "$(nproc)"
+            printf "memory_total_mib:  %s\n" "$(awk '/MemTotal/{printf "%.0f", $2/1024}' /proc/meminfo)"
+            printf "github_run_id:     %s\n" "$GITHUB_RUN_ID"
+            printf "github_run_number: %s\n" "$GITHUB_RUN_NUMBER"
+            printf "github_actor:      %s\n" "$GITHUB_ACTOR"
+            printf "github_ref:        %s\n" "$GITHUB_REF"
+            printf "github_sha:        %s\n" "$GITHUB_SHA"
+            printf "github_event:      %s\n" "$GITHUB_EVENT_NAME"
+            printf "github_repository: %s\n" "$GITHUB_REPOSITORY"
+            printf "---\n"
+            printf "packer:            %s\n" "$(packer version 2>/dev/null | head -1 || echo N/A)"
+            printf "qemu:              %s\n" "$(qemu-system-x86_64 --version 2>/dev/null | head -1 || echo N/A)"
+            printf "qemu-img:          %s\n" "$(qemu-img --version 2>/dev/null | head -1 || echo N/A)"
+            printf "virt-customize:    %s\n" "$(virt-customize --version 2>/dev/null | head -1 || echo N/A)"
+            printf "guestfish:         %s\n" "$(guestfish --version 2>/dev/null | head -1 || echo N/A)"
+            printf "gpg:               %s\n" "$(gpg --version 2>/dev/null | head -1 || echo N/A)"
+            printf "xorriso:           %s\n" "$(xorriso --version 2>/dev/null | head -1 || echo N/A)"
+            printf "python3:           %s\n" "$(python3 --version 2>/dev/null || echo N/A)"
+          } > build/build-environment.txt
+          cat build/build-environment.txt
+
+      - name: Emit outputs
+        id: out
+        run: |
+          echo "sha256=$(cat build/image.sha256)" >> "$GITHUB_OUTPUT"
+          echo "git_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"    >> "$GITHUB_OUTPUT"
+
+      - name: Upload prepare audit artefacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: prepare-audit
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            build/SHA256SUMS
+            build/SHA256SUMS.gpg
+            build/image.sha256
+            build/build-environment.txt
+            build/gpg-verify.log
+
+      # Save the verified build directory (base image + SSH key + checksums)
+      # to a run-scoped cache so parallel build jobs can restore it without
+      # re-downloading.  The run_id in the key prevents cross-run pollution.
+      - name: Save build inputs to run-scoped cache
+        uses: actions/cache/save@6849a6489940f00c2f30c0fb92c6274307ccb58a  # v4.2.0
+        with:
+          path: |
+            build/noble-server-cloudimg-amd64.img
+            build/image.sha256
+            build/SHA256SUMS
+            build/SHA256SUMS.gpg
+            build/build_key
+            build/build_key.pub
+          key: build-inputs-${{ github.run_id }}
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # build  (matrix: base, cis-l1, cis-l2 — run in parallel)
+  #
+  #  For each SKU this job:
+  #    1. Restores verified build inputs from cache.
+  #    2. Runs packer build (QEMU serial + Packer debug log captured).
+  #    3. Runs finalize.sh (remove build user, optional agent, sparsify).
+  #    4. Runs validate.sh (offline structural checks on the golden qcow2).
+  #    5. Extracts SBOM from the read-only golden image via virt-cat.
+  #    6. Computes SHA-256 checksums of all deliverables.
+  #    7. Uploads image, metadata, and log artefacts.
+  # ─────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.sku }}
+    needs: [prepare]
+    runs-on: [self-hosted, kvm]
+    permissions:
+      contents: read
+
+    # Allow a specific SKU via workflow_dispatch; build all three on push/PR.
+    # inputs.sku is '' on non-dispatch events — the first clause short-circuits.
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.sku == 'all' ||
+      inputs.sku == matrix.sku
+
+    strategy:
+      fail-fast: false   # let the remaining SKUs complete even if one fails
+      matrix:
+        sku: [base, cis-l1, cis-l2]
+
+    # All user-supplied workflow_dispatch inputs are captured here as env vars
+    # and never interpolated directly into shell commands — this prevents
+    # script injection via crafted input values.
+    env:
+      SKU:                   ${{ matrix.sku }}
+      GIT_SHA:               ${{ needs.prepare.outputs.git-sha }}
+      INPUT_ACCEL:           ${{ inputs.accel }}
+      INPUT_NTP_SERVERS:     ${{ inputs.ntp_servers }}
+      INPUT_PATCH:           ${{ inputs.patch_on_first_boot }}
+      INPUT_HARDEN_TMP:      ${{ inputs.harden_tmp }}
+      INPUT_SSH_PERMIT_ROOT: ${{ inputs.ssh_permit_root }}
+      PACKER_LOG:            1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      # ── restore verified build inputs ──────────────────────────────────────
+      - name: Restore build inputs from cache
+        uses: actions/cache/restore@6849a6489940f00c2f30c0fb92c6274307ccb58a  # v4.2.0
+        with:
+          path: |
+            build/noble-server-cloudimg-amd64.img
+            build/image.sha256
+            build/SHA256SUMS
+            build/SHA256SUMS.gpg
+            build/build_key
+            build/build_key.pub
+          key: build-inputs-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      # SSH private-key permissions are not preserved in cache archives.
+      - name: Restore SSH key file permissions
+        run: chmod 600 build/build_key
+
+      # ── libguestfs TCG fallback ────────────────────────────────────────────
+      # libguestfs/supermin requires /dev/kvm AND the running kernel's module
+      # tree.  Force TCG when either is absent so virt-* tools succeed inside
+      # containerised or stripped-down CI environments.
+      - name: Configure libguestfs backend
+        run: |
+          if [ ! -e /dev/kvm ] || [ ! -d "/lib/modules/$(uname -r)" ]; then
+            echo "LIBGUESTFS_BACKEND_SETTINGS=force_tcg" >> "$GITHUB_ENV"
+            echo "::warning::libguestfs will use force_tcg (KVM or module tree unavailable)"
+          fi
+
+      # ── validate packer config ─────────────────────────────────────────────
+      - name: Packer init
+        run: packer init .
+
+      - name: Packer validate
+        run: packer validate -var "git_sha=${GIT_SHA}" -var "hardening_profile=${SKU}" .
+
+      # ── optional password-reset agent ─────────────────────────────────────
+      # Decode the base64-encoded agent zip to a temp file.  The path is
+      # persisted to GITHUB_ENV so the cleanup step always finds it.
+      - name: Decode RESET_AGENT secret
+        if: ${{ secrets.RESET_AGENT_B64 != '' }}
+        env:
+          RESET_AGENT_B64: ${{ secrets.RESET_AGENT_B64 }}
+        run: |
+          AGENT_PATH="$(mktemp /tmp/CloudResetPwdAgent-XXXXXX.zip)"
+          # Write path to GITHUB_ENV immediately so the cleanup step always has
+          # the path, even if the integrity check below fails and the step exits.
+          echo "RESET_AGENT_PATH=${AGENT_PATH}" >> "$GITHUB_ENV"
+          printf '%s' "${RESET_AGENT_B64}" | base64 -d > "$AGENT_PATH"
+          python3 -c "
+          import zipfile, sys
+          result = zipfile.ZipFile(sys.argv[1]).testzip()
+          if result is not None:
+              print(f'ZIP error in: {result}', file=sys.stderr); sys.exit(1)
+          print('ZIP integrity: OK')
+          " "$AGENT_PATH"
+
+      # ── packer build ───────────────────────────────────────────────────────
+      # The 'make <sku>' recipe runs: prepare (no-op — cache hit) →
+      # packer init → packer build → finalize.sh → validate.sh → manifest.
+      # PACKER_LOG_PATH is set at step scope so the filename embeds the SKU.
+      - name: Build ${{ matrix.sku }}
+        id: packer-build
+        env:
+          PACKER_LOG_PATH: build/packer-${{ matrix.sku }}.log
+        run: |
+          mkdir -p build dist
+
+          # Build the make argument list as an array so values containing
+          # spaces (e.g. NTP_SERVERS="ntp1.corp ntp2.corp") are handled safely.
+          make_args=("${SKU}")
+          [ -n "${INPUT_ACCEL}"              ] && make_args+=("ACCEL=${INPUT_ACCEL}")
+          [ -n "${INPUT_NTP_SERVERS}"        ] && make_args+=("NTP_SERVERS=${INPUT_NTP_SERVERS}")
+          [ "${INPUT_PATCH}"       = "true"  ] && make_args+=("PATCH=true")
+          [ "${INPUT_HARDEN_TMP}"  = "false" ] && make_args+=("HARDEN_TMP=false")
+          [ "${INPUT_SSH_PERMIT_ROOT}" = "no" ] && make_args+=("SSH_PERMIT_ROOT=no")
+          [ -n "${RESET_AGENT_PATH:-}"       ] && make_args+=("RESET_AGENT=${RESET_AGENT_PATH}")
+
+          echo "=== make invocation: make ${make_args[*]} ==="
+          make "${make_args[@]}"
+
+      # ── always collect serial + packer logs ───────────────────────────────
+      - name: Print QEMU serial console log
+        if: always()
+        run: |
+          echo "::group::QEMU serial console — output/${SKU}/serial.log"
+          if [ -f "output/${SKU}/serial.log" ]; then
+            cat "output/${SKU}/serial.log"
+          else
+            echo "(serial.log not present — QEMU may not have started)"
+          fi
+          echo "::endgroup::"
+
+      - name: Print Packer debug log (tail)
+        if: always()
+        run: |
+          PLOG="build/packer-${SKU}.log"
+          echo "::group::Packer debug log tail — ${PLOG}"
+          if [ -f "$PLOG" ]; then
+            tail -150 "$PLOG"
+          else
+            echo "(packer.log not present)"
+          fi
+          echo "::endgroup::"
+
+      # ── image metadata ─────────────────────────────────────────────────────
+      - name: Record qemu-img info
+        if: success()
+        run: |
+          IMG="$(ls dist/ubuntu-2404-hcs-${SKU}-*.qcow2 | head -1)"
+          echo "::group::qemu-img info — $(basename "$IMG")"
+          qemu-img info "$IMG" | tee "dist/ubuntu-2404-hcs-${SKU}-qemu-img-info.txt"
+          echo "::endgroup::"
+
+      # ── SBOM extraction ────────────────────────────────────────────────────
+      # virt-cat accesses the image READ-ONLY; the golden qcow2 is not touched.
+      # The parser script lives in .github/scripts/ and is called via a pipe:
+      #   virt-cat pipes dpkg/status → python3 extract_sbom.py writes TSV
+      - name: Extract SBOM from golden image
+        if: success()
+        run: |
+          IMG="$(ls dist/ubuntu-2404-hcs-${SKU}-*.qcow2 | head -1)"
+          SBOM="dist/ubuntu-2404-hcs-${SKU}-sbom.tsv"
+          echo "Extracting SBOM from: ${IMG}"
+          virt-cat -a "$IMG" /var/lib/dpkg/status \
+            | python3 .github/scripts/extract_sbom.py "$SBOM"
+          echo "::notice::SBOM: $(( $(wc -l < "$SBOM") - 1 )) installed packages"
+
+      # ── checksums ──────────────────────────────────────────────────────────
+      - name: Compute artifact checksums
+        if: success()
+        run: |
+          cd dist
+          sha256sum \
+            "ubuntu-2404-hcs-${SKU}-${GIT_SHA}.qcow2" \
+            "ubuntu-2404-hcs-${SKU}-${GIT_SHA}.manifest.json" \
+            "ubuntu-2404-hcs-${SKU}-sbom.tsv" \
+            "ubuntu-2404-hcs-${SKU}-qemu-img-info.txt" \
+            > "ubuntu-2404-hcs-${SKU}-checksums.sha256"
+          echo "::group::Checksums"
+          cat "ubuntu-2404-hcs-${SKU}-checksums.sha256"
+          echo "::endgroup::"
+
+      # ── upload artefacts ───────────────────────────────────────────────────
+      # Images are separate from metadata so downstream consumers needing only
+      # provenance data do not have to download multi-gigabyte qcow2 files.
+      - name: Upload image artefact
+        if: success()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: image-${{ matrix.sku }}
+          retention-days: 30
+          if-no-files-found: error
+          path: dist/ubuntu-2404-hcs-${{ matrix.sku }}-*.qcow2
+
+      - name: Upload metadata artefacts
+        if: success()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: metadata-${{ matrix.sku }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            dist/ubuntu-2404-hcs-${{ matrix.sku }}-*.manifest.json
+            dist/ubuntu-2404-hcs-${{ matrix.sku }}-sbom.tsv
+            dist/ubuntu-2404-hcs-${{ matrix.sku }}-checksums.sha256
+            dist/ubuntu-2404-hcs-${{ matrix.sku }}-qemu-img-info.txt
+
+      - name: Upload build log artefacts
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: logs-${{ matrix.sku }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            output/${{ matrix.sku }}/serial.log
+            build/packer-${{ matrix.sku }}.log
+
+      # ── cleanup ────────────────────────────────────────────────────────────
+      - name: Remove RESET_AGENT temp file
+        if: always()
+        run: |
+          if [ -n "${RESET_AGENT_PATH:-}" ] && [ -f "${RESET_AGENT_PATH}" ]; then
+            rm -f "${RESET_AGENT_PATH}"
+            echo "Removed temp agent file: ${RESET_AGENT_PATH}"
+          fi
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # audit
+  #   Aggregates all metadata artefacts (no qcow2s) into a structured JSON
+  #   audit bundle and writes the GitHub Actions job summary.
+  #   Runs even when individual SKU builds fail to preserve partial evidence.
+  # ─────────────────────────────────────────────────────────────────────────
+  audit:
+    name: Audit bundle
+    needs: [prepare, build]
+    runs-on: [self-hosted, kvm]
+    permissions:
+      contents: read
+    if: always() && needs.prepare.result == 'success'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Download prepare-audit artefacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          name: prepare-audit
+          path: audit-work/prepare
+
+      # Each SKU's metadata lands in audit-work/metadata/metadata-{sku}/
+      - name: Download metadata artefacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          pattern: metadata-*
+          path: audit-work/metadata
+          merge-multiple: false
+
+      - name: Download log artefacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          pattern: logs-*
+          path: audit-work/logs
+          merge-multiple: false
+
+      # ── generate audit bundle ──────────────────────────────────────────────
+      - name: Generate audit-bundle.json
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base-image-sha256 }}
+          GIT_SHA:  ${{ needs.prepare.outputs.git-sha }}
+          BUILD_TS: ${{ needs.prepare.outputs.build-ts }}
+        run: |
+          mkdir -p audit-work/bundle
+          python3 .github/scripts/generate_audit_bundle.py audit-work/bundle
+
+      - name: Checksum the audit bundle
+        run: |
+          sha256sum audit-work/bundle/audit-bundle.json \
+            > audit-work/bundle/audit-bundle.json.sha256
+          cat audit-work/bundle/audit-bundle.json.sha256
+
+      # Copy all supporting evidence files into the flat bundle directory.
+      - name: Assemble audit bundle directory
+        run: |
+          cd audit-work/bundle
+          cp -v ../prepare/gpg-verify.log                                   . 2>/dev/null || true
+          cp -v ../prepare/build-environment.txt                            . 2>/dev/null || true
+          cp -v ../prepare/SHA256SUMS                                       . 2>/dev/null || true
+          cp -v ../prepare/SHA256SUMS.gpg                                   . 2>/dev/null || true
+          cp -v ../prepare/image.sha256                                     . 2>/dev/null || true
+          cp -v ../metadata/metadata-*/ubuntu-2404-hcs-*-sbom.tsv          . 2>/dev/null || true
+          cp -v ../metadata/metadata-*/ubuntu-2404-hcs-*-checksums.sha256  . 2>/dev/null || true
+          cp -v ../metadata/metadata-*/ubuntu-2404-hcs-*-*.manifest.json   . 2>/dev/null || true
+          cp -v ../metadata/metadata-*/ubuntu-2404-hcs-*-qemu-img-info.txt . 2>/dev/null || true
+          echo "=== audit-bundle contents ==="
+          ls -lh .
+
+      # ── job summary ────────────────────────────────────────────────────────
+      - name: Write GitHub Actions job summary
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base-image-sha256 }}
+          GIT_SHA:  ${{ needs.prepare.outputs.git-sha }}
+        run: python3 .github/scripts/generate_summary.py >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit bundle artefact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: audit-bundle
+          retention-days: 90
+          if-no-files-found: warn
+          path: audit-work/bundle/
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # release
+  #   Creates a GitHub Release when a version tag (v*.*.*) is pushed.
+  #   Attaches manifests, SBOMs, checksums, and the audit bundle.
+  #   qcow2 images are NOT attached (too large); store them in OBS/S3.
+  #   Only runs when all three SKUs and the audit job succeeded.
+  # ─────────────────────────────────────────────────────────────────────────
+  release:
+    name: GitHub Release
+    needs: [prepare, build, audit]
+    runs-on: [self-hosted, kvm]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.build.result == 'success' &&
+      needs.audit.result == 'success'
+    permissions:
+      contents: write   # required to create releases and upload assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      # gh CLI is not always pre-installed on self-hosted runners.
+      - name: Ensure GitHub CLI is available
+        run: |
+          if command -v gh &>/dev/null; then
+            echo "gh already installed: $(gh --version | head -1)"
+          else
+            echo "Installing GitHub CLI..."
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
+              "$(dpkg --print-architecture)" \
+              | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y gh
+            gh --version
+          fi
+
+      - name: Download metadata artefacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          pattern: metadata-*
+          path: release-assets/metadata
+          merge-multiple: false
+
+      - name: Download audit bundle
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          name: audit-bundle
+          path: release-assets/audit
+
+      - name: Flatten release assets
+        run: |
+          mkdir -p release-assets/flat
+          find release-assets/metadata release-assets/audit -type f \
+            -exec cp -v {} release-assets/flat/ \;
+          echo "=== Release assets ==="
+          ls -lh release-assets/flat/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.prepare.outputs.base-image-sha256 }}
+          GIT_SHA:  ${{ needs.prepare.outputs.git-sha }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # Build the release notes in a temp file so the content never appears
+          # at column 0 inside this run: block (which would terminate YAML parsing).
+          NOTES="$(mktemp /tmp/release-notes-XXXXXX.md)"
+          {
+            printf '## HCS Ubuntu 24.04 Image Catalogue — %s\n\n' "$TAG"
+            printf '**Git commit:** `%s` (short: `%s`)\n' "$GITHUB_SHA" "$GIT_SHA"
+            printf '**Base image SHA-256:** `%s`\n' "$BASE_SHA"
+            printf '**GPG key:** `D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81`'
+            printf ' (Ubuntu Cloud Image Automatic Signing Key)\n\n'
+            printf '### SKUs\n'
+            printf '| SKU | Description |\n'
+            printf '|---|---|\n'
+            printf '| `base` | HCS platform contract only — no CIS controls |\n'
+            printf '| `cis-l1` | CIS Level 1 baseline |\n'
+            printf '| `cis-l2` | CIS Level 2 baseline (stricter; verify app compatibility) |\n\n'
+            printf '### Attached assets\n'
+            printf '- Provenance manifests (`*.manifest.json`)\n'
+            printf '- Package inventories (`*-sbom.tsv`)\n'
+            printf '- SHA-256 checksums (`*-checksums.sha256`)\n'
+            printf '- qemu-img disk info (`*-qemu-img-info.txt`)\n'
+            printf '- Audit bundle (`audit-bundle.json` + evidence files)\n\n'
+            printf '### qcow2 images\n'
+            printf 'Images are **not** attached here. Retrieve them from\n'
+            printf 'the [Actions run](%s) or your OBS/S3 store.\n\n' "$RUN_URL"
+            printf '### Checksum verification\n'
+            printf '```bash\n'
+            printf 'sha256sum -c ubuntu-2404-hcs-*-checksums.sha256\n'
+            printf '```\n'
+          } > "$NOTES"
+
+          gh release create "$TAG" \
+            --title "HCS Ubuntu 24.04 ${TAG}" \
+            --notes-file "$NOTES" \
+            release-assets/flat/*
+
+          rm -f "$NOTES"

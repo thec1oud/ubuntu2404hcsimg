@@ -27,9 +27,8 @@ BASE_URL="https://cloud-images.ubuntu.com/noble/current"
 # key 8439...EFE21092. We use the cloud image, so this is the correct one.)
 CLOUDIMG_KEY="D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
 
-echo "==> Downloading image, checksum manifest and signature"
+echo "==> Downloading checksum manifest and signature"
 cd "${BUILD}"
-curl -fLO "${BASE_URL}/${IMG_NAME}"
 curl -fLO "${BASE_URL}/SHA256SUMS"
 curl -fLO "${BASE_URL}/SHA256SUMS.gpg"
 
@@ -47,18 +46,23 @@ echo "==> Verifying the SHA256SUMS signature"
 gpg "${KEYRING[@]}" --verify SHA256SUMS.gpg SHA256SUMS
 
 echo "==> Verifying the image hash against the now-trusted manifest"
-grep " *${IMG_NAME}\$" SHA256SUMS | sha256sum -c -
+EXPECTED_SHA="$(awk -v f="${IMG_NAME}" '{sub(/^\*/, "", $2)} $2 == f {print $1}' SHA256SUMS)"
+if [ -f "${IMG_NAME}" ] \
+    && echo "${EXPECTED_SHA}  ${IMG_NAME}" | sha256sum -c - &>/dev/null; then
+  echo "==> Using cached base image (SHA256 verified)"
+else
+  echo "==> Downloading base image"
+  curl -fLO "${BASE_URL}/${IMG_NAME}"
+  grep " *${IMG_NAME}\$" SHA256SUMS | sha256sum -c -
+fi
 
 # Pin the checksum we just verified, for Packer to re-check.
-# Ubuntu SHA256SUMS uses binary format: "hash *filename" — strip the leading *
-# before comparing so both "hash  filename" and "hash *filename" are handled.
-PINNED_SHA="$(awk -v f="${IMG_NAME}" '{sub(/^\*/, "", $2)} $2 == f {print $1}' SHA256SUMS)"
-if [ -z "$PINNED_SHA" ]; then
+if [ -z "$EXPECTED_SHA" ]; then
   echo "ERROR: ${IMG_NAME} not found in SHA256SUMS — cannot pin checksum" >&2
   exit 1
 fi
-echo "$PINNED_SHA" > image.sha256
-echo "==> Verified. Pinned sha256: ${PINNED_SHA}"
+echo "$EXPECTED_SHA" > image.sha256
+echo "==> Verified. Pinned sha256: ${EXPECTED_SHA}"
 
 echo "==> Generating an ephemeral SSH key for the build VM (not shipped)"
 if [ ! -f build_key ]; then
