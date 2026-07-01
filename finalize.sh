@@ -45,7 +45,7 @@ if [ -f "$_KERNEL" ] && [ ! -r "$_KERNEL" ]; then
 fi
 
 echo "==> Removing build user and any shipped credentials"
-virt-customize -a "$IMG" \
+virt-customize --no-network -a "$IMG" \
   --run-command 'deluser --remove-home packer 2>/dev/null || true' \
   --run-command 'rm -rf /home/packer' \
   --delete /etc/sudoers.d/90-cloud-init-users \
@@ -63,7 +63,7 @@ virt-customize -a "$IMG" \
 if [ -n "$AGENT_ZIP" ] && [ -f "$AGENT_ZIP" ]; then
   echo "==> Installing one-click password reset agent from $AGENT_ZIP"
   AGENT_BASENAME="$(basename "$AGENT_ZIP")"
-  virt-customize -a "$IMG" \
+  virt-customize --no-network -a "$IMG" \
     --copy-in "$AGENT_ZIP:/tmp" \
     --run-command 'cd /tmp && unzip -o "'"$AGENT_BASENAME"'" -d /tmp/crpa && \
                    cd /tmp/crpa/CloudResetPwdAgent.Linux && bash setup.sh || \
