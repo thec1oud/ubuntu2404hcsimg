@@ -52,7 +52,7 @@ virt-customize --no-network -a "$IMG" \
   --run-command 'rm -f /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys 2>/dev/null || true' \
   --run-command 'truncate -s 0 /etc/machine-id' \
   --run-command 'rm -f /etc/ssh/ssh_host_*' \
-  --run-command 'cloud-init clean --logs --seed --machine-id 2>/dev/null || true'
+  --run-command 'cloud-init clean --logs --seed 2>/dev/null || true'
 
 # --- Optional: one-click password reset agent ------------------------------
 # The CloudResetPwdAgent package is specific to your HCS environment; obtain it

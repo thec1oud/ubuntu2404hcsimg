@@ -45,7 +45,7 @@ rm -f /root/.bash_history /home/*/.bash_history 2>/dev/null || true
 rm -rf /var/lib/cloud/instances/* /var/lib/cloud/instance 2>/dev/null || true
 
 echo "==> Seal: cloud-init clean so it re-runs fresh on HCS"
-cloud-init clean --logs --seed --machine-id || cloud-init clean --logs --seed || true
+cloud-init clean --logs --seed || true
 
 echo "==> Seal: generalize network configuration for hardware-agnostic boot"
 
