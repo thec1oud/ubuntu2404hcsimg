@@ -221,7 +221,7 @@ instance out on their own:
 
 | # | Control |
 |---|---------|
-| H1 | **Key-only SSH** + modern KEX/cipher/MAC, no agent/TCP forwarding, root = `prohibit-password` |
+| H1 | **Key-only SSH** + modern KEX/cipher/MAC, no agent/TCP forwarding, root = `no` (override via `ssh_permit_root`) |
 | H2 | sysctl: ASLR, `kptr_restrict`, `dmesg_restrict`, `ptrace_scope`, kexec off, BPF hardening, anti-spoof/redirect, syncookies, protected links |
 | H3 | Blacklist unused filesystems (cramfs, hfs, udf, usb-storage…) and net protocols (dccp, sctp, rds, tipc) |
 | H4 | auditd with a CIS-style ruleset (identity, sudoers, sshd, cloud-init, setuid, modules), `-e 2` immutable |

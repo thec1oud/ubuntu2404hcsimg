@@ -68,7 +68,7 @@ Scripts run inside the build VM as root via `sudo env {{ .Vars }} bash`. Order m
   - `cis-l1`: applies controls H1–H11 (SSH key-only + strong crypto, sysctl hardening, module blacklist, auditd, PAM/pwquality, no core dumps, AppArmor, unattended-upgrades, mount hardening, AIDE first-boot init, package trim)
   - `cis-l2`: cis-l1 plus expanded auditd, daily AIDE timer, stricter sysctl (disables IP forwarding + unprivileged userns — **breaks Kubernetes, rootless containers, NAT gateways**), extra module blacklist, tighter SSH, password history, login banners, Ctrl+Alt+Del disabled
 
-  Sub-toggles: `harden_tmp=false` (skip noexec on /tmp), `ssh_permit_root=no` (full root SSH block). Pass via `make HARDEN_TMP=false` or `-var 'harden_tmp=false'`.
+  Sub-toggles: `harden_tmp=false` (skip noexec on /tmp), `ssh_permit_root=prohibit-password` (allow root SSH with key; default is `no`). Pass via `make HARDEN_TMP=false` or `-var 'harden_tmp=false'`.
 
 - **`scripts/99-seal.sh`** — Strips instance identity: truncates machine-id, removes SSH host keys, wipes logs, clears cloud-init state, removes bash history and network leases. Stamps `/etc/hcs-image-build.txt` with provenance (profile, git commit, base image sha256).
 
@@ -97,7 +97,7 @@ Scripts run inside the build VM as root via `sudo env {{ .Vars }} bash`. Order m
 | `ntp_servers` | `""` | Space-separated; empty keeps public Ubuntu pool; set for airgapped sites |
 | `patch_on_first_boot` | `false` | Enables cloud-init `package_upgrade` on first boot |
 | `harden_tmp` | `true` | Mount /tmp,/dev/shm,/var/tmp noexec (cis-l1/l2); set `false` for workloads that exec from /tmp |
-| `ssh_permit_root` | `"prohibit-password"` | `PermitRootLogin` in sshd: `prohibit-password` (key-only root) or `no` (full block) |
+| `ssh_permit_root` | `"no"` | `PermitRootLogin` in sshd (all profiles): `no` (full block, default) or `prohibit-password` (key-only root) |
 | `accelerator` | `"kvm"` | QEMU accelerator: `kvm` (fast, needs /dev/kvm) or `tcg` (software, no KVM required) |
 | `disk_size` | `10G` | Keep ≤ 128G for HCS |
 | `git_sha` | `nogit` | Makefile passes `git rev-parse --short HEAD` automatically |
@@ -118,3 +118,5 @@ dist/ubuntu-2404-hcs-<sku>-<sha>.manifest.json   # provenance (profile, commits,
 ```
 
 In-image provenance is also stamped at `/etc/hcs-image-build.txt` so instances can be identified after launch.
+
+DO NOT WRITE CODE, IF I AM ASKING QUESTIONS? JUST ANSWER AND WAIT.

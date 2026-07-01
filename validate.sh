@@ -176,6 +176,23 @@ else
   fail "ssh_pwauth not disabled in 96-hcs-tuning.cfg"
 fi
 
+if vcat /etc/cloud/cloud.cfg.d/96-hcs-tuning.cfg | grep -qE 'name:\s*ubuntu'; then
+  ok "cloud-init default_user: ubuntu"
+else
+  fail "96-hcs-tuning.cfg does not pin default_user name to ubuntu"
+fi
+
+if vexists /etc/ssh/sshd_config.d/75-hcs-root.conf; then
+  ROOT_CONF="$(vcat /etc/ssh/sshd_config.d/75-hcs-root.conf)"
+  if echo "$ROOT_CONF" | grep -qE '^PermitRootLogin (no|prohibit-password)$'; then
+    ok "75-hcs-root.conf: $(echo "$ROOT_CONF" | grep '^PermitRootLogin')"
+  else
+    fail "75-hcs-root.conf has unexpected PermitRootLogin value"
+  fi
+else
+  fail "75-hcs-root.conf missing — root SSH policy not set"
+fi
+
 # qemu-guest-agent is device-activated on Ubuntu 24.04: it has no [Install]
 # WantedBy=multi-user.target section; instead it BindsTo the virtio-serial port
 # device unit and starts automatically when that device appears at runtime.

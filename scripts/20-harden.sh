@@ -19,14 +19,14 @@
 #
 # Sub-toggles (export before build to change defaults):
 #   HARDEN_TMP=true|false       nodev/nosuid/noexec on /tmp,/dev/shm,/var/tmp
-#   SSH_PERMIT_ROOT=prohibit-password|no   root SSH policy (default prohibit-password)
+#   SSH_PERMIT_ROOT=no|prohibit-password   root SSH policy (default no)
 #
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 PROFILE="${HARDENING_PROFILE:-cis-l1}"
 HARDEN_TMP="${HARDEN_TMP:-true}"
-SSH_PERMIT_ROOT="${SSH_PERMIT_ROOT:-prohibit-password}"
+SSH_PERMIT_ROOT="${SSH_PERMIT_ROOT:-no}"
 
 case "$PROFILE" in
   base)

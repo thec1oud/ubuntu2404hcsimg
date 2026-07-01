@@ -81,12 +81,12 @@ variable "harden_tmp" {
   default = true
 }
 
-# PermitRootLogin policy written into sshd config (cis-l1/l2 only).
-#   prohibit-password  — root login allowed only with a key (default; cloud-safe)
-#   no                 — root login fully disabled
+# PermitRootLogin policy written into sshd config (all profiles).
+#   no                 — root login fully disabled (default)
+#   prohibit-password  — root login allowed only with a key
 variable "ssh_permit_root" {
   type    = string
-  default = "prohibit-password"
+  default = "no"
   validation {
     condition     = contains(["prohibit-password", "no"], var.ssh_permit_root)
     error_message = "PermitRootLogin must be one of: prohibit-password, no."
@@ -164,6 +164,7 @@ build {
     environment_vars = [
       "NTP_SERVERS=${var.ntp_servers}",
       "PATCH_ON_FIRST_BOOT=${var.patch_on_first_boot}",
+      "SSH_PERMIT_ROOT=${var.ssh_permit_root}",
     ]
     script = "${path.root}/scripts/10-hcs-prep.sh"
   }

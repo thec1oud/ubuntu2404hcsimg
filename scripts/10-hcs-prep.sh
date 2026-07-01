@@ -14,6 +14,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 NTP_SERVERS="${NTP_SERVERS:-}"
 PATCH_ON_FIRST_BOOT="${PATCH_ON_FIRST_BOOT:-false}"
+SSH_PERMIT_ROOT="${SSH_PERMIT_ROOT:-no}"
 
 echo "==> [1/10] Base packages cloud-init / virtio / guest agent / Pro client"
 apt-get update
@@ -60,13 +61,22 @@ EOF
 
 # Small, safe settings only. We deliberately do NOT override cloud_init_modules
 # wholesale (that risks silently dropping a module on a future 24.04 cloud-init).
-# KEY-ONLY: ssh_pwauth:false makes cloud-init disable SSH password auth. The
-# default user still gets the HCS-selected key pair injected, so instances MUST
-# be launched WITH a key pair or they will be unreachable.
+# KEY-ONLY: ssh_pwauth:false disables SSH password auth. The default user (ubuntu)
+# gets the HCS-selected key pair injected, so instances MUST be launched WITH a
+# key pair or they will be unreachable.
 cat > /etc/cloud/cloud.cfg.d/96-hcs-tuning.cfg <<'EOF'
 preserve_hostname: false
 disable_root: false
 ssh_pwauth: false
+system_info:
+  default_user:
+    name: ubuntu
+EOF
+
+# Disable root SSH for all profiles. 20-harden.sh repeats this in its own
+# drop-in (sorted later) so the effective value is always SSH_PERMIT_ROOT.
+cat > /etc/ssh/sshd_config.d/75-hcs-root.conf <<EOF
+PermitRootLogin ${SSH_PERMIT_ROOT}
 EOF
 
 echo "==> [4/10] Networking: let cloud-init render from the HCS datasource"

@@ -12,7 +12,7 @@
 #   make cis-l1 RESET_AGENT=/path/CloudResetPwdAgent.zip   # (skip with key-only)
 #   make base ACCEL=tcg                                     # software emulation (no /dev/kvm)
 #   make cis-l1 HARDEN_TMP=false                           # skip noexec on /tmp (exec-from-tmp workloads)
-#   make cis-l1 SSH_PERMIT_ROOT=no                         # fully block root SSH (default: prohibit-password)
+#   make cis-l1 SSH_PERMIT_ROOT=prohibit-password           # allow root SSH with key (default: no)
 #
 # Validation (offline, on the built qcow2):
 #   make check-base / make check-cis-l1 / make check-cis-l2

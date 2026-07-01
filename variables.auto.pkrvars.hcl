@@ -17,10 +17,10 @@ patch_on_first_boot = false
 # Set to false if your workload executes binaries from /tmp.
 harden_tmp = true
 
-# PermitRootLogin in sshd config (cis-l1/l2 only).
-# prohibit-password = root login allowed only with a key (default; cloud-safe)
-# no               = root login fully disabled
-ssh_permit_root = "prohibit-password"
+# PermitRootLogin in sshd config (all profiles).
+# no               = root login fully disabled (default)
+# prohibit-password = root login allowed only with a key
+ssh_permit_root = "no"
 
 # QEMU accelerator. kvm = fast (requires /dev/kvm); tcg = software emulation.
 accelerator = "kvm"
