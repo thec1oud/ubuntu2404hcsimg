@@ -224,7 +224,7 @@ jobs:
             printf "github_sha:        %s\n" "$GITHUB_SHA"
             printf "github_event:      %s\n" "$GITHUB_EVENT_NAME"
             printf "github_repository: %s\n" "$GITHUB_REPOSITORY"
-            printf "---\n"
+            printf -- "---\n"
             printf "packer:            %s\n" "$(packer version 2>/dev/null | head -1 || echo N/A)"
             printf "qemu:              %s\n" "$(qemu-system-x86_64 --version 2>/dev/null | head -1 || echo N/A)"
             printf "qemu-img:          %s\n" "$(qemu-img --version 2>/dev/null | head -1 || echo N/A)"
